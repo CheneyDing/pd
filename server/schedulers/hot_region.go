@@ -914,8 +914,11 @@ func (bs *balanceSolver) filterDstStores() map[uint64]*storeLoadDetail {
 func (bs *balanceSolver) pickDstStores(filters []filter.Filter, candidates []*core.StoreInfo) map[uint64]*storeLoadDetail {
 	ret := make(map[uint64]*storeLoadDetail, len(candidates))
 	dstToleranceRatio := bs.sche.conf.GetDstToleranceRatio()
+	log.Info("store for the region", zap.Any("store ids:", bs.cur.region.GetStoreIds()))
 	for _, store := range candidates {
+		log.Info("check store", zap.Any("store id: ", store.GetID()))
 		if filter.Target(bs.cluster, store, filters) {
+			log.Info("pass filter", zap.Any("store id: ", store.GetID()))
 			detail := bs.stLoadDetail[store.GetID()]
 			if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
 				store != bs.cluster.GetStore(bs.cur.srcStoreID) {
