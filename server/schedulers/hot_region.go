@@ -916,17 +916,10 @@ func (bs *balanceSolver) pickDstStores(filters []filter.Filter, candidates []*co
 	dstToleranceRatio := bs.sche.conf.GetDstToleranceRatio()
 	for _, store := range candidates {
 		if filter.Target(bs.cluster, store, filters) {
-			/*
-				if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
-					store != bs.cluster.GetStore(bs.cur.srcStoreID) {
-					ret[store.GetID()] = bs.stLoadDetail[store.GetID()]
-					//log.Info("szh des", zap.Any("store.GetID()",store.GetID()))
-					balanceHotRegionCounter.WithLabelValues("specialuse-dst-store-succ", strconv.FormatUint(store.GetID(), 10)).Inc()
-				} else {
-			*/
 			detail := bs.stLoadDetail[store.GetID()]
 			if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
 				store != bs.cluster.GetStore(bs.cur.srcStoreID) {
+				log.Info("pick new store as dst store", zap.Any("store id: ", store.GetID()))
 				if detail.LoadPred.max().Count*dstToleranceRatio < detail.LoadPred.Future.ExpCount {
 					ret[store.GetID()] = bs.stLoadDetail[store.GetID()]
 					balanceHotRegionCounter.WithLabelValues("dst-store-succ", strconv.FormatUint(store.GetID(), 10)).Inc()
