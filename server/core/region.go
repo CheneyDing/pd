@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
@@ -46,6 +47,21 @@ type RegionInfo struct {
 	approximateKeys   int64
 	interval          *pdpb.TimeInterval
 	replicationStatus *replication_modepb.RegionReplicationStatus
+	rwBytesTotal      uint64
+}
+
+var SplitRegionRwByte map[uint64]uint64
+
+func GetSplitRegionRwByte() map[uint64]uint64 {
+	if SplitRegionRwByte == nil {
+		SplitRegionRwByte = make(map[uint64]uint64)
+	}
+	return SplitRegionRwByte
+}
+
+// GetRwBytesTotal returns the total RW bytes of the region.
+func (r *RegionInfo) GetRwBytesTotal() uint64 {
+	return r.rwBytesTotal
 }
 
 // NewRegionInfo creates RegionInfo with region's meta and leader peer.
@@ -135,6 +151,7 @@ func (r *RegionInfo) Clone(opts ...RegionCreateOption) *RegionInfo {
 		approximateKeys:   r.approximateKeys,
 		interval:          proto.Clone(r.interval).(*pdpb.TimeInterval),
 		replicationStatus: r.replicationStatus,
+		//rwBytesTotal:      r.rwBytesTotal,
 	}
 
 	for _, opt := range opts {
@@ -587,6 +604,37 @@ func (r *RegionsInfo) GetRegion(regionID uint64) *RegionInfo {
 
 // SetRegion sets the RegionInfo with regionID
 func (r *RegionsInfo) SetRegion(region *RegionInfo) []*RegionInfo {
+	rwBytesTotalarr := GetSplitRegionRwByte()
+	overlaps := r.tree.getOverlaps(region)
+	if rwb, ok := rwBytesTotalarr[region.GetID()]; ok {
+		region.rwBytesTotal = rwb
+		delete(rwBytesTotalarr, region.GetID())
+	} else {
+		var sum uint64
+		sum = 0
+		for _, reg := range overlaps {
+			rInfo := r.regions.Get(reg.meta.GetId())
+			sum = sum + rInfo.rwBytesTotal
+		}
+		region.rwBytesTotal = sum
+	}
+	ok := false
+	for _, reg := range overlaps {
+		regInfo := r.regions.Get(reg.meta.GetId())
+		if regInfo != nil && regInfo.interval != nil && (time.Unix(int64(regInfo.interval.StartTimestamp), 0).Hour() < time.Unix(int64(region.interval.StartTimestamp), 0).Hour()) {
+			ok = true
+		}
+	}
+	if ok {
+		region.rwBytesTotal = region.rwBytesTotal / 2
+	}
+
+	if region.approximateSize > 0 {
+		region.rwBytesTotal = region.rwBytesTotal + (region.readBytes+region.writtenBytes)
+	} else {
+		region.rwBytesTotal = 0
+	}
+
 	if origin := r.regions.Get(region.GetID()); origin != nil {
 		if !bytes.Equal(origin.GetStartKey(), region.GetStartKey()) || !bytes.Equal(origin.GetEndKey(), region.GetEndKey()) {
 			r.removeRegionFromTreeAndMap(origin)
