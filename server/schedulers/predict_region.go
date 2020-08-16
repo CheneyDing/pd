@@ -81,6 +81,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	// getTopK
 	regions := cluster.GetRegions()
 	regionIDs := getTopK(regions)
+	log.Info("TopK", zap.Any("Region IDs", regionIDs))
 
 	// find new store
 	var newStores []*core.StoreInfo
@@ -91,8 +92,10 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	}
 
 	if len(newStores) == 0 {
+		log.Info("New store is nil")
 		return nil
 	}
+	log.Info("New stores", zap.Any("Stores:", newStores))
 
 	// check topK region
 	for _, regionID := range regionIDs {
