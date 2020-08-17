@@ -81,12 +81,12 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	// getTopK
 	regions := cluster.GetRegions()
 	regionIDs := getTopK(regions)
-	log.Info("TopK", zap.Any("Region IDs", regionIDs))
+	log.Info("TopK", zap.Any("Region Count: ", len(regionIDs)))
 
 	// find new store
 	var newStores []*core.StoreInfo
 	for _, store := range cluster.GetStores() {
-		if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion {
+		if (store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion) && !store.IsOffline() {
 			newStores = append(newStores, store)
 		}
 	}
