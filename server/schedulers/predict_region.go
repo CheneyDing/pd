@@ -9,6 +9,7 @@ import (
 	"github.com/pingcap/pd/v4/server/schedule/operator"
 	"github.com/pingcap/pd/v4/server/schedule/opt"
 	"go.uber.org/zap"
+	"math"
 	"sync"
 )
 
@@ -84,10 +85,10 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	log.Info("TopK", zap.Any("Region Count: ", len(regionIDs)))
 
 	// find new store
-	var newStores []*core.StoreInfo
+	newStores := make(map[uint64]*core.StoreInfo)
 	for _, store := range cluster.GetStores() {
 		if (store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion) && !store.IsOffline() {
-			newStores = append(newStores, store)
+			newStores[store.GetID()] = store
 		}
 	}
 
@@ -100,47 +101,63 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	// check topK region
 	for _, regionID := range regionIDs {
 		region := cluster.GetRegion(regionID)
-		stores := cluster.GetRegionStores(region)
-		isOK := false
-		for _, store := range stores {
-			if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion {
-				if region.GetLeader().GetStoreId() == store.GetID() {
-					isOK = true
-					break
-				} else {
-					// transfer leader to new store
-					op, err := operator.CreateTransferLeaderOperator(PredictRegionType, cluster, region, region.GetLeader().GetStoreId(), store.GetID(), operator.OpLeader)
-					if err != nil {
-						log.Debug("fail to create predict region operator", zap.Error(err))
-						return nil
-					}
-					return []*operator.Operator{op}
-				}
+		// filter out new stores with out region's peer
+		stores := region.GetStoreIds()
+		availNewStores := make(map[uint64]*core.StoreInfo)
+		for _, store := range newStores {
+			if _, ok := stores[store.GetID()]; !ok{
+				availNewStores[store.GetID()] = store
 			}
 		}
-		if !isOK {
-			// move leader to new store
-			destStoreID := pickDestStore(newStores)
-			destPeer := &metapb.Peer{StoreId: destStoreID}
-			op, err := operator.CreateMoveLeaderOperator("predict-move-leader", cluster, region, operator.OpRegion|operator.OpLeader, region.GetLeader().GetStoreId(), destPeer)
-			if err != nil {
-				log.Debug("fail to create move leader operator", zap.Error(err))
-				return nil
+		// priority process leader
+		leader := region.GetLeader()
+		if _, ok := newStores[leader.GetStoreId()]; !ok {
+			if len(availNewStores) == 0{
+				destStoreID := pickDestStore(newStores)
+				op, err := operator.CreateTransferLeaderOperator(PredictRegionType, cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
+				if err != nil {
+					log.Debug("fail to create predict region operator", zap.Error(err))
+					return nil
+				}
+				return []*operator.Operator{op}
+			} else {
+				destStoreID := pickDestStore(availNewStores)
+				destPeer := &metapb.Peer{StoreId: destStoreID}
+				op, err := operator.CreateMoveLeaderOperator("predict-move-leader", cluster, region, operator.OpRegion|operator.OpLeader, region.GetLeader().GetStoreId(), destPeer)
+				if err != nil {
+					log.Debug("fail to create move leader operator", zap.Error(err))
+					return nil
+				}
+				return []*operator.Operator{op}
 			}
-			return []*operator.Operator{op}
+		}
+		// then process other peers
+		peers := region.GetPeers()
+		for _, peer := range peers {
+			_, ok := newStores[peer.GetStoreId()]
+			if peer.GetId() != region.GetLeader().GetId() && !ok && len(availNewStores) != 0{
+				destStoreID := pickDestStore(availNewStores)
+				dstPeer := &metapb.Peer{StoreId: destStoreID, IsLearner: peer.IsLearner}
+				op, err := operator.CreateMovePeerOperator("predict-move-peer", cluster, region, operator.OpRegion, peer.GetStoreId(), dstPeer)
+				if err != nil {
+					log.Debug("fail to create move peer operator", zap.Error(err))
+					return nil
+				}
+				return []*operator.Operator{op}
+			}
 		}
 	}
 
 	return nil
 }
 
-func pickDestStore(stores []*core.StoreInfo) uint64 {
-	minCount := stores[0].GetLeaderCount()
-	minStoreID := stores[0].GetID()
-	for _, store := range stores {
-		if store.GetLeaderCount() < minCount {
-			minCount = store.GetLeaderCount()
-			minStoreID = store.GetID()
+func pickDestStore(stores map[uint64]*core.StoreInfo) uint64 {
+	minCount := math.MaxUint64
+	minStoreID := uint64(math.MaxUint64)
+	for id, store := range stores {
+		if store.GetRegionCount() < minCount {
+			minCount = store.GetRegionCount()
+			minStoreID = id
 		}
 	}
 	return minStoreID
