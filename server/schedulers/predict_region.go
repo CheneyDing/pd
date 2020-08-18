@@ -152,11 +152,11 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 }
 
 func pickDestStore(stores map[uint64]*core.StoreInfo) uint64 {
-	minCount := math.MaxUint64
+	minCount := uint64(math.MaxUint64)
 	minStoreID := uint64(math.MaxUint64)
 	for id, store := range stores {
-		if store.GetRegionCount() < minCount {
-			minCount = store.GetRegionCount()
+		if uint64(store.GetRegionCount()) < minCount {
+			minCount = uint64(store.GetRegionCount())
 			minStoreID = id
 		}
 	}
