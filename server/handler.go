@@ -306,6 +306,11 @@ func (h *Handler) AddRandomMergeScheduler() error {
 	return h.AddScheduler(schedulers.RandomMergeType)
 }
 
+// AddPredictRegionScheduler adds a predict-region-scheduler
+func (h *Handler) AddPredictRegionScheduler() error {
+	return h.AddScheduler(schedulers.PredictRegionType)
+}
+
 // GetOperator returns the region operator.
 func (h *Handler) GetOperator(regionID uint64) (*operator.Operator, error) {
 	c, err := h.GetOperatorController()
