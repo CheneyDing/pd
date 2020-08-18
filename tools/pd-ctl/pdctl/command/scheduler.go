@@ -128,6 +128,7 @@ func NewAddSchedulerCommand() *cobra.Command {
 	c.AddCommand(NewRandomMergeSchedulerCommand())
 	c.AddCommand(NewBalanceAdjacentRegionSchedulerCommand())
 	c.AddCommand(NewLabelSchedulerCommand())
+	c.AddCommand(NewPredictRegionSchedulerCommand())
 	return c
 }
 
@@ -296,6 +297,16 @@ func NewLabelSchedulerCommand() *cobra.Command {
 		Use:   "label-scheduler",
 		Short: "add a scheduler to schedule regions according to the label",
 		Run:   addSchedulerCommandFunc,
+	}
+	return c
+}
+
+// NewPredictRegionSchedulerCommand returns a command to add a predict-region-scheduler
+func NewPredictRegionSchedulerCommand() *cobra.Command {
+	c := &cobra.Command{
+		Use: "predict-region-scheduler",
+		Short: "add a scheduler to schedule regions according to ai prediction",
+		Run: addSchedulerCommandFunc,
 	}
 	return c
 }
