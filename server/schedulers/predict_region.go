@@ -61,7 +61,6 @@ func newPredictScheduler(opController *schedule.OperatorController, conf *predic
 	}
 	ret.filters = []filter.Filter{
 		filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true, MoveRegion: true},
-		filter.NewSpecialUseFilter(ret.name, filter.SpecialUseHotRegion),
 	}
 	return ret
 }
@@ -89,7 +88,8 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	// find new store
 	newStores := make(map[uint64]*core.StoreInfo)
 	for _, store := range cluster.GetStores() {
-		if filter.Target(cluster, store, p.filters) {
+		if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
+			filter.Target(cluster, store, p.filters) {
 			newStores[store.GetID()] = store
 		}
 	}
