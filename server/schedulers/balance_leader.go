@@ -155,11 +155,6 @@ func (l *balanceLeaderScheduler) Schedule(cluster opt.Cluster) []*operator.Opera
 	for i := 0; i < len(sources) || i < len(targets); i++ {
 		if i < len(sources) {
 			source := sources[i]
-			if source.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
-				float64(source.GetRegionCount()) < 1.05 * float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
-				log.Info("source is new store and count is smaller than 1/4", zap.Any("store id: ", source.GetID()))
-				continue
-			}
 			sourceID := source.GetID()
 			log.Debug("store leader score", zap.String("scheduler", l.GetName()), zap.Uint64("source-store", sourceID))
 			sourceStoreLabel := strconv.FormatUint(sourceID, 10)
@@ -175,11 +170,6 @@ func (l *balanceLeaderScheduler) Schedule(cluster opt.Cluster) []*operator.Opera
 		}
 		if i < len(targets) {
 			target := targets[i]
-			if target.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
-				float64(target.GetRegionCount()) * 1.05 > float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
-				log.Info("target is new store and it's region count is bigger than 1/4", zap.Any("store id: ", target.GetID()))
-				continue
-			}
 			targetID := target.GetID()
 			log.Debug("store leader score", zap.String("scheduler", l.GetName()), zap.Uint64("target-store", targetID))
 			targetStoreLabel := strconv.FormatUint(targetID, 10)
@@ -282,7 +272,17 @@ func (l *balanceLeaderScheduler) createOperator(cluster opt.Cluster, region *cor
 	}
 
 	sourceID := source.GetID()
+	if source.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
+		float64(source.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+		log.Info("source is new store and region count is less than 1/4, ignore it", zap.Any("store id:", sourceID))
+		return nil
+	}
 	targetID := target.GetID()
+	if target.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
+		float64(target.GetRegionCount()) > 1.05 * float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+		log.Info("target is new store and region count is more than 1/4, ignore it", zap.Any("store id:", targetID))
+		return nil
+	}
 
 	opInfluence := l.opController.GetOpInfluence(cluster)
 	kind := core.NewScheduleKind(core.LeaderKind, cluster.GetLeaderSchedulePolicy())
