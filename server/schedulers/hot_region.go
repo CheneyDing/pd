@@ -208,7 +208,7 @@ func (h *hotScheduler) prepareForBalance(cluster opt.Cluster) {
 			regionRead,
 			minHotDegree,
 			hotRegionThreshold,
-			read, core.LeaderKind, mixed)
+			read, core.LeaderKind, mixed, cluster)
 	}
 
 	{ // update write statistics
@@ -223,7 +223,7 @@ func (h *hotScheduler) prepareForBalance(cluster opt.Cluster) {
 			regionWrite,
 			minHotDegree,
 			hotRegionThreshold,
-			write, core.LeaderKind, mixed)
+			write, core.LeaderKind, mixed, cluster)
 
 		h.stLoadInfos[writePeer] = summaryStoresLoad(
 			storeByte,
@@ -232,7 +232,7 @@ func (h *hotScheduler) prepareForBalance(cluster opt.Cluster) {
 			regionWrite,
 			minHotDegree,
 			hotRegionThreshold,
-			write, core.RegionKind, mixed)
+			write, core.RegionKind, mixed, cluster)
 	}
 }
 
@@ -304,6 +304,7 @@ func summaryStoresLoad(
 	rwTy rwType,
 	kind core.ResourceKind,
 	hotPeerFilterTy hotPeerFilterType,
+	cluster opt.Cluster,
 ) map[uint64]*storeLoadDetail {
 	loadDetail := make(map[uint64]*storeLoadDetail, len(storeByteRate))
 	allByteSum := 0.0
@@ -357,7 +358,11 @@ func summaryStoresLoad(
 			HotPeers: hotPeers,
 		}
 	}
-	storeLen := float64(len(storeByteRate))
+
+	unhealthyStore := getUnhealthyStores(cluster)
+	storeLen := float64(len(storeByteRate) - len(unhealthyStore))
+
+	log.Info("storeLen", zap.Any("storeLen:", storeLen))
 
 	for id, detail := range loadDetail {
 		byteExp := allByteSum / storeLen
