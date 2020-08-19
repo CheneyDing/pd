@@ -98,7 +98,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 		log.Info("New store is nil")
 		return nil
 	}
-	log.Info("New stores", zap.Any("Stores:", newStores))
+	//log.Info("New stores", zap.Any("Stores:", newStores))
 
 	// check topK region
 	for _, regionID := range regionIDs {
@@ -111,27 +111,33 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 				availNewStores[store.GetID()] = store
 			}
 		}
-		log.Info("Avail new stores", zap.Any("Stores:", availNewStores))
+		//log.Info("Avail new stores", zap.Any("Stores:", availNewStores))
 		// priority process leader
 		leader := region.GetLeader()
 		if _, ok := newStores[leader.GetStoreId()]; !ok {
 			if len(availNewStores) == 0{
 				destStoreID := pickDestStore(newStores)
-				op, err := operator.CreateTransferLeaderOperator("predict-transfer-leader", cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
-				if err != nil {
-					log.Debug("fail to create predict region operator", zap.Error(err))
-					return nil
+				destStore := cluster.GetStore(destStoreID)
+				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+					op, err := operator.CreateTransferLeaderOperator("predict-transfer-leader", cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
+					if err != nil {
+						log.Debug("fail to create predict region operator", zap.Error(err))
+						return nil
+					}
+					return []*operator.Operator{op}
 				}
-				return []*operator.Operator{op}
 			} else {
 				destStoreID := pickDestStore(availNewStores)
-				destPeer := &metapb.Peer{StoreId: destStoreID}
-				op, err := operator.CreateMoveLeaderOperator("predict-move-leader", cluster, region, operator.OpRegion|operator.OpLeader, region.GetLeader().GetStoreId(), destPeer)
-				if err != nil {
-					log.Debug("fail to create move leader operator", zap.Error(err))
-					return nil
+				destStore := cluster.GetStore(destStoreID)
+				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+					destPeer := &metapb.Peer{StoreId: destStoreID}
+					op, err := operator.CreateMoveLeaderOperator("predict-move-leader", cluster, region, operator.OpRegion|operator.OpLeader, region.GetLeader().GetStoreId(), destPeer)
+					if err != nil {
+						log.Debug("fail to create move leader operator", zap.Error(err))
+						return nil
+					}
+					return []*operator.Operator{op}
 				}
-				return []*operator.Operator{op}
 			}
 		}
 		// then process other peers
