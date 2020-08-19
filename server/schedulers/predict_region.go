@@ -74,7 +74,8 @@ func (p *predictScheduler) GetType() string {
 }
 
 func (p *predictScheduler) IsScheduleAllowed(cluster opt.Cluster) bool {
-	return p.OpController.OperatorCount(operator.OpLeader) < cluster.GetLeaderScheduleLimit()
+	return p.OpController.OperatorCount(operator.OpLeader) < cluster.GetLeaderScheduleLimit() &&
+		p.OpController.OperatorCount(operator.OpRegion) < cluster.GetRegionScheduleLimit()
 }
 
 func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
@@ -84,10 +85,14 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	regionIDs := getTopK(regions)
 	log.Info("TopK", zap.Any("Region Count: ", len(regionIDs)))
 
+	filters := []filter.Filter{
+		filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true},
+	}
+
 	// find new store
 	newStores := make(map[uint64]*core.StoreInfo)
 	for _, store := range cluster.GetStores() {
-		if (store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion) && !store.IsOffline() {
+		if (store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion) && !filter.Target(cluster, store, filters) {
 			newStores[store.GetID()] = store
 		}
 	}
@@ -109,12 +114,13 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 				availNewStores[store.GetID()] = store
 			}
 		}
+		log.Info("Avail new stores", zap.Any("Stores:", availNewStores))
 		// priority process leader
 		leader := region.GetLeader()
 		if _, ok := newStores[leader.GetStoreId()]; !ok {
 			if len(availNewStores) == 0{
 				destStoreID := pickDestStore(newStores)
-				op, err := operator.CreateTransferLeaderOperator(PredictRegionType, cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
+				op, err := operator.CreateTransferLeaderOperator("predict-transfer-leader", cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
 				if err != nil {
 					log.Debug("fail to create predict region operator", zap.Error(err))
 					return nil
