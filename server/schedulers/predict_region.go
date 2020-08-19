@@ -10,7 +10,6 @@ import (
 	"github.com/pingcap/pd/v4/server/schedule/opt"
 	"go.uber.org/zap"
 	"math"
-	"sync"
 )
 
 func init() {
@@ -48,8 +47,7 @@ type predictRegionSchedulerConfig struct {
 type predictScheduler struct {
 	name string
 	*BaseScheduler
-	sync.RWMutex
-
+	filters      []filter.Filter
 	// config of predict scheduler
 	conf *predictRegionSchedulerConfig
 }
@@ -59,8 +57,11 @@ func newPredictScheduler(opController *schedule.OperatorController, conf *predic
 	ret := &predictScheduler{
 		name:           PredictRegionName,
 		BaseScheduler:  base,
-
 		conf:           conf,
+	}
+	ret.filters = []filter.Filter{
+		filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true, MoveRegion: true},
+		filter.NewSpecialUseFilter(ret.name, filter.SpecialUseHotRegion),
 	}
 	return ret
 }
@@ -85,14 +86,10 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	regionIDs := getTopK(regions)
 	//log.Info("TopK", zap.Any("Region Count: ", len(regionIDs)))
 
-	filters := []filter.Filter{
-		filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true, MoveRegion: true},
-	}
-
 	// find new store
 	newStores := make(map[uint64]*core.StoreInfo)
 	for _, store := range cluster.GetStores() {
-		if (store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion) && filter.Target(cluster, store, filters) {
+		if filter.Target(cluster, store, p.filters) {
 			newStores[store.GetID()] = store
 		}
 	}
@@ -101,7 +98,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 		log.Info("New store is nil")
 		return nil
 	}
-	//log.Info("New stores", zap.Any("Stores:", newStores))
+	log.Info("New stores", zap.Any("Stores:", newStores))
 
 	// check topK region
 	for _, regionID := range regionIDs {
@@ -114,7 +111,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 				availNewStores[store.GetID()] = store
 			}
 		}
-		//log.Info("Avail new stores", zap.Any("Stores:", availNewStores))
+		log.Info("Avail new stores", zap.Any("Stores:", availNewStores))
 		// priority process leader
 		leader := region.GetLeader()
 		if _, ok := newStores[leader.GetStoreId()]; !ok {
