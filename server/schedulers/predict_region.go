@@ -92,7 +92,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	// find new store
 	newStores := make(map[uint64]*core.StoreInfo)
 	for _, store := range cluster.GetStores() {
-		if (store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion) && !filter.Target(cluster, store, filters) {
+		if (store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion) && filter.Target(cluster, store, filters) {
 			newStores[store.GetID()] = store
 		}
 	}
