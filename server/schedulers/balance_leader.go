@@ -130,13 +130,44 @@ func (l *balanceLeaderScheduler) IsScheduleAllowed(cluster opt.Cluster) bool {
 	return l.opController.OperatorCount(operator.OpLeader) < cluster.GetLeaderScheduleLimit()
 }
 
+type StoreType int
+const  (
+	source StoreType = iota
+	target
+)
+
+func filterSpecialStore(cluster opt.Cluster, stores []*core.StoreInfo, storeTy StoreType) []*core.StoreInfo {
+	var res []*core.StoreInfo
+	for _, store := range stores {
+		if store.GetLabelValue(filter.SpecialUseKey) != filter.SpecialUseHotRegion {
+			res = append(res, store)
+		} else {
+			switch storeTy {
+			case source:
+				if float64(store.GetRegionCount()) > 1.05 * float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+					res = append(res, store)
+				}
+			case target:
+				if float64(store.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+					res = append(res, store)
+				}
+			}
+		}
+	}
+	return res
+}
+
 func (l *balanceLeaderScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	schedulerCounter.WithLabelValues(l.GetName(), "schedule").Inc()
 
 	leaderSchedulePolicy := l.opController.GetLeaderSchedulePolicy()
 	stores := cluster.GetStores()
 	sources := filter.SelectSourceStores(stores, l.filters, cluster)
+	log.Info("before filter special store", zap.Any("sources:", sources))
+	sources = filterSpecialStore(cluster, sources, source)
+	log.Info("after filter special store", zap.Any("sources:", sources))
 	targets := filter.SelectTargetStores(stores, l.filters, cluster)
+	targets = filterSpecialStore(cluster, targets, target)
 	opInfluence := l.opController.GetOpInfluence(cluster)
 	kind := core.NewScheduleKind(core.LeaderKind, leaderSchedulePolicy)
 	sort.Slice(sources, func(i, j int) bool {

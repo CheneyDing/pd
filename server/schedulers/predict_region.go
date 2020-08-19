@@ -83,10 +83,10 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	// getTopK
 	regions := cluster.GetRegions()
 	regionIDs := getTopK(regions)
-	log.Info("TopK", zap.Any("Region Count: ", len(regionIDs)))
+	//log.Info("TopK", zap.Any("Region Count: ", len(regionIDs)))
 
 	filters := []filter.Filter{
-		filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true},
+		filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true, MoveRegion: true},
 	}
 
 	// find new store
@@ -101,7 +101,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 		log.Info("New store is nil")
 		return nil
 	}
-	log.Info("New stores", zap.Any("Stores:", newStores))
+	//log.Info("New stores", zap.Any("Stores:", newStores))
 
 	// check topK region
 	for _, regionID := range regionIDs {
@@ -114,7 +114,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 				availNewStores[store.GetID()] = store
 			}
 		}
-		log.Info("Avail new stores", zap.Any("Stores:", availNewStores))
+		//log.Info("Avail new stores", zap.Any("Stores:", availNewStores))
 		// priority process leader
 		leader := region.GetLeader()
 		if _, ok := newStores[leader.GetStoreId()]; !ok {
