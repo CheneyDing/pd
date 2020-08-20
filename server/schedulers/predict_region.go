@@ -116,9 +116,9 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 		leader := region.GetLeader()
 		if _, ok := newStores[leader.GetStoreId()]; !ok {
 			if len(availNewStores) == 0{
-				destStoreID := pickDestStore(newStores)
+				destStoreID := pickDestStore(cluster, newStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
 					op, err := operator.CreateTransferLeaderOperator("predict-transfer-leader", cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
 					if err != nil {
 						log.Debug("fail to create predict region operator", zap.Error(err))
@@ -127,9 +127,9 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 					return []*operator.Operator{op}
 				}
 			} else {
-				destStoreID := pickDestStore(availNewStores)
+				destStoreID := pickDestStore(cluster, availNewStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
 					destPeer := &metapb.Peer{StoreId: destStoreID}
 					op, err := operator.CreateMoveLeaderOperator("predict-move-leader", cluster, region, operator.OpRegion|operator.OpLeader, region.GetLeader().GetStoreId(), destPeer)
 					if err != nil {
@@ -145,14 +145,17 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 		for _, peer := range peers {
 			_, ok := newStores[peer.GetStoreId()]
 			if peer.GetId() != region.GetLeader().GetId() && !ok && len(availNewStores) != 0{
-				destStoreID := pickDestStore(availNewStores)
-				dstPeer := &metapb.Peer{StoreId: destStoreID, IsLearner: peer.IsLearner}
-				op, err := operator.CreateMovePeerOperator("predict-move-peer", cluster, region, operator.OpRegion, peer.GetStoreId(), dstPeer)
-				if err != nil {
-					log.Debug("fail to create move peer operator", zap.Error(err))
-					return nil
+				destStoreID := pickDestStore(cluster, availNewStores)
+				destStore := cluster.GetStore(destStoreID)
+				if float64(destStore.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+					dstPeer := &metapb.Peer{StoreId: destStoreID, IsLearner: peer.IsLearner}
+					op, err := operator.CreateMovePeerOperator("predict-move-peer", cluster, region, operator.OpRegion, peer.GetStoreId(), dstPeer)
+					if err != nil {
+						log.Debug("fail to create move peer operator", zap.Error(err))
+						return nil
+					}
+					return []*operator.Operator{op}
 				}
-				return []*operator.Operator{op}
 			}
 		}
 	}
@@ -160,7 +163,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	return nil
 }
 
-func pickDestStore(stores map[uint64]*core.StoreInfo) uint64 {
+func pickDestStore(cluster opt.Cluster, stores map[uint64]*core.StoreInfo) uint64 {
 	minCount := uint64(math.MaxUint64)
 	minStoreID := uint64(math.MaxUint64)
 	for id, store := range stores {
