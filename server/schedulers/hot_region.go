@@ -362,7 +362,7 @@ func summaryStoresLoad(
 	unhealthyStore := getUnhealthyStores(cluster)
 	storeLen := float64(len(storeByteRate) - len(unhealthyStore))
 
-	log.Info("storeLen", zap.Any("storeLen:", storeLen))
+	//log.Info("storeLen", zap.Any("storeLen:", storeLen))
 
 	for id, detail := range loadDetail {
 		byteExp := allByteSum / storeLen
