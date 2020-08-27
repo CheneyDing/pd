@@ -118,7 +118,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 			if len(availNewStores) == 0{
 				destStoreID := pickDestStore(cluster, newStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
 					op, err := operator.CreateTransferLeaderOperator("predict-transfer-leader", cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
 					if err != nil {
 						log.Debug("fail to create predict region operator", zap.Error(err))
@@ -129,7 +129,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 			} else {
 				destStoreID := pickDestStore(cluster, availNewStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
 					destPeer := &metapb.Peer{StoreId: destStoreID}
 					op, err := operator.CreateMoveLeaderOperator("predict-move-leader", cluster, region, operator.OpRegion|operator.OpLeader, region.GetLeader().GetStoreId(), destPeer)
 					if err != nil {
@@ -147,7 +147,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 			if peer.GetId() != region.GetLeader().GetId() && !ok && len(availNewStores) != 0{
 				destStoreID := pickDestStore(cluster, availNewStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetRegionCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetRegionCount()) * 1.05 < 3 * float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
 					dstPeer := &metapb.Peer{StoreId: destStoreID, IsLearner: peer.IsLearner}
 					op, err := operator.CreateMovePeerOperator("predict-move-peer", cluster, region, operator.OpRegion, peer.GetStoreId(), dstPeer)
 					if err != nil {
