@@ -654,7 +654,7 @@ func (bs *balanceSolver) filterSrcStores() map[uint64]*storeLoadDetail {
 		}
 		store := bs.cluster.GetStore(id)
 		if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion {
-			if float64(store.GetRegionCount()) > bs.sche.conf.GetSrcToleranceRatio() * float64(bs.cluster.GetRegionCount()) / float64(len(bs.cluster.GetStores())) {
+			if float64(store.GetRegionCount()) > 3 * bs.sche.conf.GetSrcToleranceRatio() * float64(bs.cluster.GetRegionCount()) / float64(len(bs.cluster.GetStores())) {
 				ret[store.GetID()] = bs.stLoadDetail[store.GetID()]
 				balanceHotRegionCounter.WithLabelValues("src-store-succ", strconv.FormatUint(id, 10)).Inc()
 			}
@@ -827,7 +827,7 @@ func (bs *balanceSolver) pickDstStores(filters []filter.Filter, candidates []*co
 			detail := bs.stLoadDetail[store.GetID()]
 			if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
 				store != bs.cluster.GetStore(bs.cur.srcStoreID) {
-				if float64(store.GetRegionCount()) * dstToleranceRatio < float64(bs.cluster.GetRegionCount()) / float64(len(bs.cluster.GetStores())) {
+				if float64(store.GetRegionCount()) * dstToleranceRatio < 3 * float64(bs.cluster.GetRegionCount()) / float64(len(bs.cluster.GetStores())) {
 					ret[store.GetID()] = bs.stLoadDetail[store.GetID()]
 					balanceHotRegionCounter.WithLabelValues("dst-store-succ", strconv.FormatUint(store.GetID(), 10)).Inc()
 				}
