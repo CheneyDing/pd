@@ -404,6 +404,7 @@ func filterHotPeers(
 		}
 		ret = append(ret, peer)
 	}
+	log.Info("len of hot peers", zap.Any("len: ", len(ret)))
 	return ret
 }
 
