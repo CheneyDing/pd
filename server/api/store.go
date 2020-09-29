@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,14 +21,15 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errcode"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/pkg/apiutil"
-	"github.com/pingcap/pd/v4/pkg/typeutil"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/config"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/storelimit"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/apiutil"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/core/storelimit"
 	"github.com/unrolled/render"
 )
 
@@ -142,6 +143,7 @@ func newStoreHandler(handler *server.Handler, rd *render.Render) *storeHandler {
 // @Produce json
 // @Success 200 {object} StoreInfo
 // @Failure 400 {string} string "The input is invalid."
+// @Failure 404 {string} string "The store does not exist."
 // @Failure 500 {string} string "PD server failed to proceed the request."
 // @Router /store/{id} [get]
 func (h *storeHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -155,7 +157,7 @@ func (h *storeHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	store := rc.GetStore(storeID)
 	if store == nil {
-		h.rd.JSON(w, http.StatusInternalServerError, server.ErrStoreNotFound(storeID))
+		h.rd.JSON(w, http.StatusNotFound, server.ErrStoreNotFound(storeID).Error())
 		return
 	}
 
@@ -190,8 +192,13 @@ func (h *storeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		err = rc.RemoveStore(storeID)
 	}
 
-	if err != nil {
-		apiutil.ErrorResp(h.rd, w, err)
+	if errors.ErrorEqual(err, errs.ErrStoreNotFound.FastGenByArgs(storeID)) {
+		h.rd.JSON(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	if errors.ErrorEqual(err, errs.ErrStoreTombstone.FastGenByArgs(storeID)) {
+		h.rd.JSON(w, http.StatusGone, err.Error())
 		return
 	}
 
@@ -315,12 +322,12 @@ func (h *storeHandler) SetWeight(w http.ResponseWriter, r *http.Request) {
 	}
 	leader, ok := leaderVal.(float64)
 	if !ok || leader < 0 {
-		h.rd.JSON(w, http.StatusBadRequest, "badformat leader weight")
+		h.rd.JSON(w, http.StatusBadRequest, "bad format leader weight")
 		return
 	}
 	region, ok := regionVal.(float64)
 	if !ok || region < 0 {
-		h.rd.JSON(w, http.StatusBadRequest, "badformat region weight")
+		h.rd.JSON(w, http.StatusBadRequest, "bad format region weight")
 		return
 	}
 
@@ -353,7 +360,7 @@ func (h *storeHandler) SetLimit(w http.ResponseWriter, r *http.Request) {
 
 	store := rc.GetStore(storeID)
 	if store == nil {
-		h.rd.JSON(w, http.StatusInternalServerError, server.ErrStoreNotFound(storeID))
+		h.rd.JSON(w, http.StatusInternalServerError, server.ErrStoreNotFound(storeID).Error())
 		return
 	}
 
@@ -404,7 +411,7 @@ func newStoresHandler(handler *server.Handler, rd *render.Render) *storesHandler
 // @Tags store
 // @Summary Remove tombstone records in the cluster.
 // @Produce json
-// @Success 200 {string} string "Remove tomestone successfully."
+// @Success 200 {string} string "Remove tombstone successfully."
 // @Failure 500 {string} string "PD server failed to proceed the request."
 // @Router /stores/remove-tombstone [delete]
 func (h *storesHandler) RemoveTombStone(w http.ResponseWriter, r *http.Request) {
@@ -415,7 +422,7 @@ func (h *storesHandler) RemoveTombStone(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	h.rd.JSON(w, http.StatusOK, "Remove tomestone successfully.")
+	h.rd.JSON(w, http.StatusOK, "Remove tombstone successfully.")
 }
 
 // FIXME: details of input json body params
@@ -451,10 +458,32 @@ func (h *storesHandler) SetAllLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, typ := range typeValues {
-		if err := h.SetAllStoresLimit(ratePerMin, typ); err != nil {
-			h.rd.JSON(w, http.StatusInternalServerError, err.Error())
+	if _, ok := input["labels"]; !ok {
+		for _, typ := range typeValues {
+			if err := h.SetAllStoresLimit(ratePerMin, typ); err != nil {
+				h.rd.JSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+	} else {
+		labelMap := input["labels"].(map[string]interface{})
+		labels := make([]*metapb.StoreLabel, 0, len(input))
+		for k, v := range labelMap {
+			labels = append(labels, &metapb.StoreLabel{
+				Key:   k,
+				Value: v.(string),
+			})
+		}
+
+		if err := config.ValidateLabels(labels); err != nil {
+			apiutil.ErrorResp(h.rd, w, errcode.NewInvalidInputErr(err))
 			return
+		}
+		for _, typ := range typeValues {
+			if err := h.SetLabelStoresLimit(ratePerMin, typ, labels); err != nil {
+				h.rd.JSON(w, http.StatusInternalServerError, err.Error())
+				return
+			}
 		}
 	}
 
@@ -464,12 +493,35 @@ func (h *storesHandler) SetAllLimit(w http.ResponseWriter, r *http.Request) {
 // FIXME: details of output json body
 // @Tags store
 // @Summary Get limit of all stores in the cluster.
+// @Param include_tombstone query bool false "include Tombstone" default(false)
 // @Produce json
 // @Success 200 {object} string
 // @Failure 500 {string} string "PD server failed to proceed the request."
 // @Router /stores/limit [get]
 func (h *storesHandler) GetAllLimit(w http.ResponseWriter, r *http.Request) {
 	limits := h.GetScheduleConfig().StoreLimit
+	includeTombstone := false
+	var err error
+	if includeStr := r.URL.Query().Get("include_tombstone"); includeStr != "" {
+		includeTombstone, err = strconv.ParseBool(includeStr)
+		if err != nil {
+			h.rd.JSON(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if !includeTombstone {
+		returned := make(map[uint64]config.StoreLimitConfig, len(limits))
+		rc := getCluster(r.Context())
+		for storeID, v := range limits {
+			store := rc.GetStore(storeID)
+			if store == nil || store.IsTombstone() {
+				continue
+			}
+			returned[storeID] = v
+		}
+		h.rd.JSON(w, http.StatusOK, returned)
+		return
+	}
 	h.rd.JSON(w, http.StatusOK, limits)
 }
 
@@ -538,7 +590,7 @@ func (h *storesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		storeID := s.GetId()
 		store := rc.GetStore(storeID)
 		if store == nil {
-			h.rd.JSON(w, http.StatusInternalServerError, server.ErrStoreNotFound(storeID))
+			h.rd.JSON(w, http.StatusInternalServerError, server.ErrStoreNotFound(storeID).Error())
 			return
 		}
 

@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,9 +21,8 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/kv"
-	"github.com/pkg/errors"
-	"go.uber.org/zap"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/kv"
 )
 
 var dirtyFlushTick = time.Second
@@ -86,7 +85,7 @@ func (s *RegionStorage) backgroundFlush() {
 					continue
 				}
 				if err = s.FlushRegion(); err != nil {
-					log.Error("flush regions meet error", zap.Error(err))
+					log.Error("flush regions meet error", errs.ZapError(err))
 				}
 			case <-s.regionStorageCtx.Done():
 				return
@@ -140,7 +139,7 @@ func loadRegions(kv kv.Base, f func(region *RegionInfo) []*RegionInfo) error {
 		for _, s := range res {
 			region := &metapb.Region{}
 			if err := region.Unmarshal([]byte(s)); err != nil {
-				return errors.WithStack(err)
+				return errs.ErrProtoUnmarshal.Wrap(err).GenWithStackByArgs()
 			}
 
 			nextID = region.GetId() + 1
@@ -178,8 +177,12 @@ func (s *RegionStorage) flush() error {
 func (s *RegionStorage) Close() error {
 	err := s.FlushRegion()
 	if err != nil {
-		log.Error("meet error before close the region storage", zap.Error(err))
+		log.Error("meet error before close the region storage", errs.ZapError(err))
 	}
 	s.regionStorageCancel()
-	return errors.WithStack(s.LeveldbKV.Close())
+	err = s.LeveldbKV.Close()
+	if err != nil {
+		return errs.ErrLevelDBClose.Wrap(err).GenWithStackByArgs()
+	}
+	return nil
 }

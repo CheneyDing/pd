@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,15 +22,17 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/pkg/mock/mockid"
-	"github.com/pingcap/pd/v4/server/config"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/id"
-	"github.com/pingcap/pd/v4/server/kv"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
+	"github.com/tikv/pd/pkg/mock/mockid"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/id"
+	"github.com/tikv/pd/server/kv"
+	"github.com/tikv/pd/server/schedule/opt"
+	"github.com/tikv/pd/server/versioninfo"
 )
 
 func Test(t *testing.T) {
@@ -48,6 +50,7 @@ func (s *testClusterInfoSuite) TestStoreHeartbeat(c *C) {
 
 	n, np := uint64(3), uint64(3)
 	stores := newTestStores(n)
+	storeMetasAfterHeartbeat := make([]*metapb.Store, 0, n)
 	regions := newTestRegions(n, np)
 
 	for _, region := range regions {
@@ -74,16 +77,50 @@ func (s *testClusterInfoSuite) TestStoreHeartbeat(c *C) {
 		s := cluster.GetStore(store.GetID())
 		c.Assert(s.GetLastHeartbeatTS().UnixNano(), Not(Equals), int64(0))
 		c.Assert(s.GetStoreStats(), DeepEquals, storeStats)
+
+		storeMetasAfterHeartbeat = append(storeMetasAfterHeartbeat, s.GetMeta())
 	}
 
 	c.Assert(cluster.GetStoreCount(), Equals, int(n))
 
-	for _, store := range stores {
+	for i, store := range stores {
 		tmp := &metapb.Store{}
 		ok, err := cluster.storage.LoadStore(store.GetID(), tmp)
 		c.Assert(ok, IsTrue)
 		c.Assert(err, IsNil)
-		c.Assert(tmp, DeepEquals, store.GetMeta())
+		c.Assert(tmp, DeepEquals, storeMetasAfterHeartbeat[i])
+	}
+}
+
+func (s *testClusterInfoSuite) TestFilterUnhealthyStore(c *C) {
+	_, opt, err := newTestScheduleConfig()
+	c.Assert(err, IsNil)
+	cluster := newTestRaftCluster(mockid.NewIDAllocator(), opt, core.NewStorage(kv.NewMemoryKV()), core.NewBasicCluster())
+
+	stores := newTestStores(3)
+	for _, store := range stores {
+		storeStats := &pdpb.StoreStats{
+			StoreId:     store.GetID(),
+			Capacity:    100,
+			Available:   50,
+			RegionCount: 1,
+		}
+		c.Assert(cluster.putStoreLocked(store), IsNil)
+		c.Assert(cluster.HandleStoreHeartbeat(storeStats), IsNil)
+		c.Assert(cluster.storesStats.GetRollingStoreStats(store.GetID()), NotNil)
+	}
+
+	for _, store := range stores {
+		storeStats := &pdpb.StoreStats{
+			StoreId:     store.GetID(),
+			Capacity:    100,
+			Available:   50,
+			RegionCount: 1,
+		}
+		newStore := store.Clone(core.SetStoreState(metapb.StoreState_Tombstone))
+		c.Assert(cluster.putStoreLocked(newStore), IsNil)
+		c.Assert(cluster.HandleStoreHeartbeat(storeStats), IsNil)
+		c.Assert(cluster.storesStats.GetRollingStoreStats(store.GetID()), IsNil)
 	}
 }
 
@@ -312,6 +349,34 @@ func (s *testClusterInfoSuite) TestRegionHeartbeat(c *C) {
 	}
 }
 
+func (s *testClusterInfoSuite) TestRegionFlowChanged(c *C) {
+	_, opt, err := newTestScheduleConfig()
+	c.Assert(err, IsNil)
+	cluster := newTestRaftCluster(mockid.NewIDAllocator(), opt, core.NewStorage(kv.NewMemoryKV()), core.NewBasicCluster())
+	regions := []*core.RegionInfo{core.NewTestRegionInfo([]byte{}, []byte{})}
+	processRegions := func(regions []*core.RegionInfo) {
+		for _, r := range regions {
+			cluster.processRegionHeartbeat(r)
+		}
+	}
+	regions = core.SplitRegions(regions)
+	processRegions(regions)
+	// update region
+	region := regions[0]
+	regions[0] = region.Clone(core.SetReadBytes(1000))
+	processRegions(regions)
+	newRegion := cluster.GetRegion(region.GetID())
+	c.Assert(newRegion.GetBytesRead(), Equals, uint64(1000))
+
+	// do not trace the flow changes
+	cluster.traceRegionFlow = false
+	processRegions([]*core.RegionInfo{region})
+	newRegion = cluster.GetRegion(region.GetID())
+	c.Assert(region.GetBytesRead(), Equals, uint64(0))
+	c.Assert(newRegion.GetBytesRead(), Not(Equals), uint64(0))
+
+}
+
 func (s *testClusterInfoSuite) TestConcurrentRegionHeartbeat(c *C) {
 	_, opt, err := newTestScheduleConfig()
 	c.Assert(err, IsNil)
@@ -333,13 +398,13 @@ func (s *testClusterInfoSuite) TestConcurrentRegionHeartbeat(c *C) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	c.Assert(failpoint.Enable("github.com/pingcap/pd/v4/server/cluster/concurrentRegionHeartbeat", "return(true)"), IsNil)
+	c.Assert(failpoint.Enable("github.com/tikv/pd/server/cluster/concurrentRegionHeartbeat", "return(true)"), IsNil)
 	go func() {
 		defer wg.Done()
 		cluster.processRegionHeartbeat(source)
 	}()
 	time.Sleep(100 * time.Millisecond)
-	c.Assert(failpoint.Disable("github.com/pingcap/pd/v4/server/cluster/concurrentRegionHeartbeat"), IsNil)
+	c.Assert(failpoint.Disable("github.com/tikv/pd/server/cluster/concurrentRegionHeartbeat"), IsNil)
 	c.Assert(cluster.processRegionHeartbeat(target), IsNil)
 	wg.Wait()
 	checkRegion(c, cluster.GetRegionByKey([]byte{}), target)
@@ -660,7 +725,7 @@ func newTestScheduleConfig() (*config.ScheduleConfig, *config.PersistOptions, er
 		return nil, nil, err
 	}
 	opt := config.NewPersistOptions(cfg)
-	opt.SetClusterVersion(MinSupportedVersion(Version2_0))
+	opt.SetClusterVersion(versioninfo.MinSupportedVersion(versioninfo.Version2_0))
 	return &cfg.Schedule, opt, nil
 }
 
@@ -794,7 +859,7 @@ func checkStaleRegion(origin *metapb.Region, region *metapb.Region) error {
 	e := region.GetRegionEpoch()
 
 	if e.GetVersion() < o.GetVersion() || e.GetConfVer() < o.GetConfVer() {
-		return core.ErrRegionIsStale(region, origin)
+		return errors.Errorf("region is stale: region %v origin %v", region, origin)
 	}
 
 	return nil

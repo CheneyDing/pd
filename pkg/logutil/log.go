@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,11 +21,12 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/coreos/pkg/capnslog"
 	zaplog "github.com/pingcap/log"
-	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
+	"github.com/tikv/pd/pkg/errs"
 	"go.etcd.io/etcd/raft"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -94,7 +95,7 @@ func (rf *redirectFormatter) Format(pkg string, level capnslog.LogLevel, depth i
 // Flush only for implementing Formatter.
 func (rf *redirectFormatter) Flush() {}
 
-// isSKippedPackageName tests wether path name is on log library calling stack.
+// isSKippedPackageName tests whether path name is on log library calling stack.
 func isSkippedPackageName(name string) bool {
 	return strings.Contains(name, "github.com/sirupsen/logrus") ||
 		strings.Contains(name, "github.com/coreos/pkg/capnslog")
@@ -217,7 +218,7 @@ func StringToLogFormatter(format string, disableTimestamp bool) log.Formatter {
 func InitFileLog(cfg *zaplog.FileLogConfig) error {
 	if st, err := os.Stat(cfg.Filename); err == nil {
 		if st.IsDir() {
-			return errors.New("can't use directory as log file name")
+			return errs.ErrInitFileLog.FastGenByArgs("can't use directory as log file name")
 		}
 	}
 	if cfg.MaxSize == 0 {
@@ -245,7 +246,7 @@ type wrapLogrus struct {
 // least l - this is needed to meet the LoggerV2 interface.  GRPC's logging levels
 // are: https://github.com/grpc/grpc-go/blob/master/grpclog/loggerv2.go#L71
 // 0=info, 1=warning, 2=error, 3=fatal
-// logrus's are: https://github.com/sirupsen/logrus/blob/master/logrus.go
+// logrus' are: https://github.com/sirupsen/logrus/blob/master/logrus.go
 // 0=panic, 1=fatal, 2=error, 3=warn, 4=info, 5=debug
 func (lg *wrapLogrus) V(l int) bool {
 	// translate to logrus level
@@ -291,4 +292,69 @@ func LogPanic() {
 	if e := recover(); e != nil {
 		zaplog.Fatal("panic", zap.Reflect("recover", e))
 	}
+}
+
+var (
+	enabledRedactLog atomic.Value
+)
+
+func init() {
+	SetRedactLog(false)
+}
+
+// IsRedactLogEnabled indicates whether the log desensitization is enabled
+func IsRedactLogEnabled() bool {
+	return enabledRedactLog.Load().(bool)
+}
+
+// SetRedactLog sets enabledRedactLog
+func SetRedactLog(enabled bool) {
+	enabledRedactLog.Store(enabled)
+}
+
+// ZapRedactByteString receives []byte argument and return omitted information zap.Field if redact log enabled
+func ZapRedactByteString(key string, arg []byte) zap.Field {
+	return zap.ByteString(key, RedactBytes(arg))
+}
+
+// ZapRedactString receives string argument and return omitted information in zap.Field if redact log enabled
+func ZapRedactString(key, arg string) zap.Field {
+	return zap.String(key, RedactString(arg))
+}
+
+// ZapRedactStringer receives stringer argument and return omitted information in zap.Field  if redact log enabled
+func ZapRedactStringer(key string, arg fmt.Stringer) zap.Field {
+	return zap.Stringer(key, RedactStringer(arg))
+}
+
+// RedactBytes receives []byte argument and return omitted information if redact log enabled
+func RedactBytes(arg []byte) []byte {
+	if IsRedactLogEnabled() {
+		return []byte("?")
+	}
+	return arg
+}
+
+// RedactString receives string argument and return omitted information if redact log enabled
+func RedactString(arg string) string {
+	if IsRedactLogEnabled() {
+		return "?"
+	}
+	return arg
+}
+
+// RedactStringer receives stringer argument and return omitted information if redact log enabled
+func RedactStringer(arg fmt.Stringer) fmt.Stringer {
+	if IsRedactLogEnabled() {
+		return stringer{}
+	}
+	return arg
+}
+
+type stringer struct {
+}
+
+// String implement fmt.Stringer
+func (s stringer) String() string {
+	return "?"
 }

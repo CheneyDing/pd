@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,14 +18,14 @@ import (
 	"crypto/tls"
 	"net/url"
 
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/errs"
 	"go.etcd.io/etcd/pkg/transport"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
-// SecurityConfig is the configuration for supporting tls.
-type SecurityConfig struct {
+// TLSConfig is the configuration for supporting tls.
+type TLSConfig struct {
 	// CAPath is the path of file that contains list of trusted SSL CAs. if set, following four settings shouldn't be empty
 	CAPath string `toml:"cacert-path" json:"cacert-path"`
 	// CertPath is the path of file that contains X509 certificate in PEM format.
@@ -37,7 +37,7 @@ type SecurityConfig struct {
 }
 
 // ToTLSConfig generates tls config.
-func (s SecurityConfig) ToTLSConfig() (*tls.Config, error) {
+func (s TLSConfig) ToTLSConfig() (*tls.Config, error) {
 	if len(s.CertPath) == 0 && len(s.KeyPath) == 0 {
 		return nil, nil
 	}
@@ -55,20 +55,20 @@ func (s SecurityConfig) ToTLSConfig() (*tls.Config, error) {
 
 	tlsConfig, err := tlsInfo.ClientConfig()
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, errs.ErrEtcdTLSConfig.Wrap(err).GenWithStackByCause()
 	}
 	return tlsConfig, nil
 }
 
 // GetOneAllowedCN only gets the first one CN.
-func (s SecurityConfig) GetOneAllowedCN() (string, error) {
+func (s TLSConfig) GetOneAllowedCN() (string, error) {
 	switch len(s.CertAllowedCN) {
 	case 1:
 		return s.CertAllowedCN[0], nil
 	case 0:
 		return "", nil
 	default:
-		return "", errors.New("Currently only supports one CN")
+		return "", errs.ErrSecurityConfig.FastGenByArgs("only supports one CN")
 	}
 }
 
@@ -93,11 +93,11 @@ func GetClientConn(ctx context.Context, addr string, tlsCfg *tls.Config, do ...g
 	}
 	u, err := url.Parse(addr)
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, errs.ErrURLParse.Wrap(err).GenWithStackByCause()
 	}
 	cc, err := grpc.DialContext(ctx, u.Host, append(do, opt)...)
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, errs.ErrGRPCDial.Wrap(err).GenWithStackByCause()
 	}
 	return cc, nil
 }

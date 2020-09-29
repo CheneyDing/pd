@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errcode"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pkg/errors"
 	"github.com/unrolled/render"
 )
 
@@ -77,7 +77,7 @@ type FieldError struct {
 }
 
 // ParseUint64VarsField connects strconv.ParseUint with request variables
-// It hardcodes the base to 10 and bitsize to 64
+// It hardcodes the base to 10 and bit size to 64
 // Any error returned will connect the requested field to the error via FieldError
 func ParseUint64VarsField(vars map[string]string, varName string) (uint64, *FieldError) {
 	str, ok := vars[varName]

@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,11 +21,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/api"
-	"github.com/pingcap/pd/v4/server/schedule/storelimit"
-	"github.com/pingcap/pd/v4/tests"
-	"github.com/pingcap/pd/v4/tests/pdctl"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/api"
+	"github.com/tikv/pd/server/core/storelimit"
+	"github.com/tikv/pd/tests"
+	"github.com/tikv/pd/tests/pdctl"
 )
 
 func Test(t *testing.T) {
@@ -87,6 +87,14 @@ func (s *storeTestSuite) TestStore(c *C) {
 	storesInfo := new(api.StoresInfo)
 	c.Assert(json.Unmarshal(output, &storesInfo), IsNil)
 	pdctl.CheckStoresInfo(c, storesInfo.Stores, stores[:2])
+
+	// store --state=<query states> command
+	args = []string{"-u", pdAddr, "store", "--state", "Up,Tombstone"}
+	_, output, err = pdctl.ExecuteCommandC(cmd, args...)
+	c.Assert(err, IsNil)
+	storesInfo = new(api.StoresInfo)
+	c.Assert(json.Unmarshal(output, &storesInfo), IsNil)
+	pdctl.CheckStoresInfo(c, storesInfo.Stores, stores)
 
 	// store <store_id> command
 	args = []string{"-u", pdAddr, "store", "1"}
@@ -196,6 +204,13 @@ func (s *storeTestSuite) TestStore(c *C) {
 	limit2 = leaderServer.GetRaftCluster().GetStoreLimitByType(2, storelimit.RemovePeer)
 	c.Assert(limit2, Equals, float64(25))
 
+	// store limit all <key> <value> <rate> <type>
+	args = []string{"-u", pdAddr, "store", "limit", "all", "zone", "uk", "20", "remove-peer"}
+	_, _, err = pdctl.ExecuteCommandC(cmd, args...)
+	c.Assert(err, IsNil)
+	limit1 = leaderServer.GetRaftCluster().GetStoreLimitByType(1, storelimit.RemovePeer)
+	c.Assert(limit1, Equals, float64(20))
+
 	// store limit all 0 is invalid
 	args = []string{"-u", pdAddr, "store", "limit", "all", "0"}
 	_, output, err = pdctl.ExecuteCommandC(cmd, args...)
@@ -208,14 +223,16 @@ func (s *storeTestSuite) TestStore(c *C) {
 	json.Unmarshal([]byte(echo), &allAddPeerLimit)
 	c.Assert(allAddPeerLimit["1"]["add-peer"].(float64), Equals, float64(20))
 	c.Assert(allAddPeerLimit["3"]["add-peer"].(float64), Equals, float64(20))
-	c.Assert(allAddPeerLimit["2"]["add-peer"].(float64), Equals, float64(20))
+	_, ok := allAddPeerLimit["2"]["add-peer"]
+	c.Assert(ok, Equals, false)
 
 	echo = pdctl.GetEcho([]string{"-u", pdAddr, "store", "limit", "remove-peer"})
 	allRemovePeerLimit := make(map[string]map[string]interface{})
 	json.Unmarshal([]byte(echo), &allRemovePeerLimit)
-	c.Assert(allRemovePeerLimit["1"]["remove-peer"].(float64), Equals, float64(25))
+	c.Assert(allRemovePeerLimit["1"]["remove-peer"].(float64), Equals, float64(20))
 	c.Assert(allRemovePeerLimit["3"]["remove-peer"].(float64), Equals, float64(25))
-	c.Assert(allRemovePeerLimit["2"]["remove-peer"].(float64), Equals, float64(25))
+	_, ok = allRemovePeerLimit["2"]["add-peer"]
+	c.Assert(ok, Equals, false)
 
 	// store delete <store_id> command
 	c.Assert(storeInfo.Store.State, Equals, metapb.StoreState_Up)
@@ -289,4 +306,5 @@ func (s *storeTestSuite) TestStore(c *C) {
 	err = json.Unmarshal(output, scene)
 	c.Assert(err, IsNil)
 	c.Assert(scene.Idle, Equals, 100)
+
 }

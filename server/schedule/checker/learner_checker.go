@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,10 +15,10 @@ package checker
 
 import (
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"go.uber.org/zap"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
 )
 
 // LearnerChecker ensures region has a learner will be promoted.
@@ -41,7 +41,7 @@ func (l *LearnerChecker) Check(region *core.RegionInfo) *operator.Operator {
 		}
 		op, err := operator.CreatePromoteLearnerOperator("promote-learner", l.cluster, region, p)
 		if err != nil {
-			log.Debug("fail to create promote learner operator", zap.Error(err))
+			log.Debug("fail to create promote learner operator", errs.ZapError(err))
 			return nil
 		}
 		return op

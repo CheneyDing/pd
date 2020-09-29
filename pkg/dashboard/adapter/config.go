@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2020 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@ package adapter
 import (
 	"github.com/pingcap-incubator/tidb-dashboard/pkg/config"
 
-	"github.com/pingcap/pd/v4/server"
+	"github.com/tikv/pd/server"
 )
 
 // GenDashboardConfig generates a configuration for Dashboard Server.
@@ -28,13 +28,12 @@ func GenDashboardConfig(srv *server.Server) (*config.Config, error) {
 		return nil, err
 	}
 
-	dashboardCfg := &config.Config{
-		DataDir:          cfg.DataDir,
-		PDEndPoint:       etcdCfg.ACUrls[0].String(),
-		PublicPathPrefix: cfg.Dashboard.PublicPathPrefix,
-		EnableTelemetry:  cfg.Dashboard.EnableTelemetry,
-	}
-
+	dashboardCfg := config.Default()
+	dashboardCfg.DataDir = cfg.DataDir
+	dashboardCfg.PDEndPoint = etcdCfg.ACUrls[0].String()
+	dashboardCfg.PublicPathPrefix = cfg.Dashboard.PublicPathPrefix
+	dashboardCfg.EnableTelemetry = cfg.Dashboard.EnableTelemetry
+	dashboardCfg.EnableExperimental = cfg.Dashboard.EnableExperimental
 	if dashboardCfg.ClusterTLSConfig, err = cfg.Security.ToTLSConfig(); err != nil {
 		return nil, err
 	}

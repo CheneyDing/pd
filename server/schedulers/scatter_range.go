@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,12 +19,13 @@ import (
 	"sync"
 
 	"github.com/gorilla/mux"
-	"github.com/pingcap/pd/v4/pkg/apiutil"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
+	"github.com/tikv/pd/pkg/apiutil"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
 	"github.com/unrolled/render"
 )
 
@@ -33,14 +34,14 @@ func init() {
 	schedule.RegisterSliceDecoderBuilder(ScatterRangeType, func(args []string) schedule.ConfigDecoder {
 		return func(v interface{}) error {
 			if len(args) != 3 {
-				return errors.New("should specify the range and the name")
+				return errs.ErrSchedulerConfig.FastGenByArgs("ranges and name")
 			}
 			if len(args[2]) == 0 {
-				return errors.New("the range name is invalid")
+				return errs.ErrSchedulerConfig.FastGenByArgs("range name")
 			}
 			conf, ok := v.(*scatterRangeSchedulerConfig)
 			if !ok {
-				return ErrScheduleConfigNotExist
+				return errs.ErrScheduleConfigNotExist.FastGenByArgs()
 			}
 			conf.StartKey = args[0]
 			conf.EndKey = args[1]
@@ -58,7 +59,7 @@ func init() {
 		}
 		rangeName := conf.RangeName
 		if len(rangeName) == 0 {
-			return nil, errors.New("the range name is invalid")
+			return nil, errs.ErrSchedulerConfig.FastGenByArgs("range name")
 		}
 		return newScatterRangeScheduler(opController, conf), nil
 	})
@@ -81,7 +82,7 @@ type scatterRangeSchedulerConfig struct {
 
 func (conf *scatterRangeSchedulerConfig) BuildWithArgs(args []string) error {
 	if len(args) != 3 {
-		return errors.New("scatter range need 3 arguments to setup config")
+		return errs.ErrSchedulerConfig.FastGenByArgs("ranges and name")
 	}
 	conf.mu.Lock()
 	defer conf.mu.Unlock()
@@ -110,8 +111,7 @@ func (conf *scatterRangeSchedulerConfig) Persist() error {
 	if err != nil {
 		return err
 	}
-	conf.storage.SaveScheduleConfig(name, data)
-	return nil
+	return conf.storage.SaveScheduleConfig(name, data)
 }
 
 func (conf *scatterRangeSchedulerConfig) GetRangeName() string {
@@ -193,7 +193,7 @@ func (l *scatterRangeScheduler) EncodeConfig() ([]byte, error) {
 }
 
 func (l *scatterRangeScheduler) IsScheduleAllowed(cluster opt.Cluster) bool {
-	return l.OpController.OperatorCount(operator.OpRange) < cluster.GetRegionScheduleLimit()
+	return l.OpController.OperatorCount(operator.OpRange) < cluster.GetOpts().GetRegionScheduleLimit()
 }
 
 func (l *scatterRangeScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
@@ -238,7 +238,7 @@ func (handler *scatterRangeHandler) UpdateConfig(w http.ResponseWriter, r *http.
 	name, ok := input["range-name"].(string)
 	if ok {
 		if name != handler.config.GetRangeName() {
-			handler.rd.JSON(w, http.StatusInternalServerError, errors.New("Cannot change the range name, please delete this schedule"))
+			handler.rd.JSON(w, http.StatusInternalServerError, errors.New("Cannot change the range name, please delete this schedule").Error())
 			return
 		}
 		args = append(args, name)
@@ -262,7 +262,7 @@ func (handler *scatterRangeHandler) UpdateConfig(w http.ResponseWriter, r *http.
 	handler.config.BuildWithArgs(args)
 	err := handler.config.Persist()
 	if err != nil {
-		handler.rd.JSON(w, http.StatusInternalServerError, err)
+		handler.rd.JSON(w, http.StatusInternalServerError, err.Error())
 	}
 	handler.rd.JSON(w, http.StatusOK, nil)
 }

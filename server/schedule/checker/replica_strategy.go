@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2020 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,9 +15,9 @@ package checker
 
 import (
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/filter"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule/filter"
+	"github.com/tikv/pd/server/schedule/opt"
 	"go.uber.org/zap"
 )
 
@@ -57,6 +57,9 @@ func (s *ReplicaStrategy) SelectStoreToAdd(coLocationStores []*core.StoreInfo, e
 		filter.NewSpecialUseFilter(s.checkerName),
 		filter.StoreStateFilter{ActionScope: s.checkerName, MoveRegion: true, AllowTemporaryStates: true},
 	}
+	if len(s.locationLabels) > 0 && s.isolationLevel != "" {
+		filters = append(filters, filter.NewIsolationFilter(s.checkerName, s.isolationLevel, s.locationLabels, coLocationStores))
+	}
 	if len(extraFilters) > 0 {
 		filters = append(filters, extraFilters...)
 	}
@@ -67,10 +70,10 @@ func (s *ReplicaStrategy) SelectStoreToAdd(coLocationStores []*core.StoreInfo, e
 	isolationComparer := filter.IsolationComparer(s.locationLabels, coLocationStores)
 	strictStateFilter := filter.StoreStateFilter{ActionScope: s.checkerName, MoveRegion: true}
 	target := filter.NewCandidates(s.cluster.GetStores()).
-		FilterTarget(s.cluster, filters...).
-		Sort(isolationComparer).Reverse().Top(isolationComparer). // greater isolation score is better
-		Sort(filter.RegionScoreComparer(s.cluster)).              // less region score is better
-		FilterTarget(s.cluster, strictStateFilter).PickFirst()    // the filter does not ignore temp states
+		FilterTarget(s.cluster.GetOpts(), filters...).
+		Sort(isolationComparer).Reverse().Top(isolationComparer).        // greater isolation score is better
+		Sort(filter.RegionScoreComparer(s.cluster.GetOpts())).           // less region score is better
+		FilterTarget(s.cluster.GetOpts(), strictStateFilter).PickFirst() // the filter does not ignore temp states
 	if target == nil {
 		return 0
 	}
@@ -91,8 +94,13 @@ func (s *ReplicaStrategy) SelectStoreToReplace(coLocationStores []*core.StoreInf
 func (s *ReplicaStrategy) SelectStoreToImprove(coLocationStores []*core.StoreInfo, old uint64) uint64 {
 	// trick to avoid creating a slice with `old` removed.
 	s.swapStoreToFirst(coLocationStores, old)
-	improver := filter.NewLocationImprover(s.checkerName, s.locationLabels, coLocationStores, s.cluster.GetStore(old))
-	return s.SelectStoreToAdd(coLocationStores[1:], improver)
+	filters := []filter.Filter{
+		filter.NewLocationImprover(s.checkerName, s.locationLabels, coLocationStores, s.cluster.GetStore(old)),
+	}
+	if len(s.locationLabels) > 0 && s.isolationLevel != "" {
+		filters = append(filters, filter.NewIsolationFilter(s.checkerName, s.isolationLevel, s.locationLabels, coLocationStores[1:]))
+	}
+	return s.SelectStoreToAdd(coLocationStores[1:], filters...)
 }
 
 func (s *ReplicaStrategy) swapStoreToFirst(stores []*core.StoreInfo, id uint64) {
@@ -108,9 +116,9 @@ func (s *ReplicaStrategy) swapStoreToFirst(stores []*core.StoreInfo, id uint64) 
 func (s *ReplicaStrategy) SelectStoreToRemove(coLocationStores []*core.StoreInfo) uint64 {
 	isolationComparer := filter.IsolationComparer(s.locationLabels, coLocationStores)
 	source := filter.NewCandidates(coLocationStores).
-		FilterSource(s.cluster, filter.StoreStateFilter{ActionScope: replicaCheckerName, MoveRegion: true}).
+		FilterSource(s.cluster.GetOpts(), filter.StoreStateFilter{ActionScope: replicaCheckerName, MoveRegion: true}).
 		Sort(isolationComparer).Top(isolationComparer).
-		Sort(filter.RegionScoreComparer(s.cluster)).Reverse().
+		Sort(filter.RegionScoreComparer(s.cluster.GetOpts())).Reverse().
 		PickFirst()
 	if source == nil {
 		log.Debug("no removable store", zap.Uint64("region-id", s.region.GetID()))

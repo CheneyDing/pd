@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,8 +16,8 @@ package placement
 import (
 	"strings"
 
-	"github.com/pingcap/pd/v4/pkg/slice"
-	"github.com/pingcap/pd/v4/server/core"
+	"github.com/tikv/pd/pkg/slice"
+	"github.com/tikv/pd/server/core"
 )
 
 // LabelConstraintOp defines how a LabelConstraint matches a store. It can be one of
@@ -69,7 +69,7 @@ func (c *LabelConstraint) MatchStore(store *core.StoreInfo) bool {
 var legacyExclusiveLabels = []string{"engine", "exclusive"}
 
 // If a store has exclusiveLabels, it can only be selected when the label is
-// exciplitly specified in constraints.
+// explicitly specified in constraints.
 func isExclusiveLabel(key string) bool {
 	return strings.HasPrefix(key, "$") || slice.AnyOf(legacyExclusiveLabels, func(i int) bool {
 		return key == legacyExclusiveLabels[i]

@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2020 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,26 +16,39 @@ package checker
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/pkg/mock/mockcluster"
-	"github.com/pingcap/pd/v4/pkg/mock/mockoption"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
+	"github.com/tikv/pd/pkg/mock/mockcluster"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/versioninfo"
 )
-
-type testLearnerCheckerSuite struct{}
 
 var _ = Suite(&testLearnerCheckerSuite{})
 
+type testLearnerCheckerSuite struct {
+	cluster *mockcluster.Cluster
+	lc      *LearnerChecker
+}
+
+func (s *testLearnerCheckerSuite) SetUpTest(c *C) {
+	s.cluster = mockcluster.NewCluster(config.NewTestOptions())
+	s.cluster.DisableFeature(versioninfo.JointConsensus)
+	s.lc = NewLearnerChecker(s.cluster)
+	for id := uint64(1); id <= 10; id++ {
+		s.cluster.PutStoreWithLabels(id)
+	}
+}
+
 func (s *testLearnerCheckerSuite) TestPromoteLearner(c *C) {
-	cluster := mockcluster.NewCluster(mockoption.NewScheduleOptions())
-	lc := NewLearnerChecker(cluster)
+	lc := s.lc
+
 	region := core.NewRegionInfo(
 		&metapb.Region{
 			Id: 1,
 			Peers: []*metapb.Peer{
 				{Id: 101, StoreId: 1},
 				{Id: 102, StoreId: 2},
-				{Id: 103, StoreId: 3, IsLearner: true},
+				{Id: 103, StoreId: 3, Role: metapb.PeerRole_Learner},
 			},
 		}, &metapb.Peer{Id: 101, StoreId: 1})
 	op := lc.Check(region)

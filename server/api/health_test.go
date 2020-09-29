@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,15 +19,15 @@ import (
 	"strings"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/config"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/config"
 )
 
 var _ = Suite(&testHealthAPISuite{})
 
 type testHealthAPISuite struct{}
 
-func checkSliceResponse(c *C, body []byte, cfgs []*config.Config, unhealth string) {
+func checkSliceResponse(c *C, body []byte, cfgs []*config.Config, unhealthy string) {
 	got := []Health{}
 	c.Assert(json.Unmarshal(body, &got), IsNil)
 	c.Assert(len(got), Equals, len(cfgs))
@@ -39,7 +39,7 @@ func checkSliceResponse(c *C, body []byte, cfgs []*config.Config, unhealth strin
 			}
 			relaxEqualStings(c, h.ClientUrls, strings.Split(cfg.ClientUrls, ","))
 		}
-		if h.Name == unhealth {
+		if h.Name == unhealthy {
 			c.Assert(h.Health, IsFalse)
 			continue
 		}

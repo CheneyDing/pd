@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ var _ = Suite(&testTimeSuite{})
 
 type testTimeSuite struct{}
 
-func (s *testTimeSuite) TestParseTimestap(c *C) {
+func (s *testTimeSuite) TestParseTimestamp(c *C) {
 	for i := 0; i < 3; i++ {
 		t := time.Now().Add(time.Second * time.Duration(rand.Int31n(1000)))
 		data := Uint64ToBytes(uint64(t.UnixNano()))

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,11 +21,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/pkg/mock/mockcluster"
-	"github.com/pingcap/pd/v4/pkg/mock/mockoption"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pingcap/pd/v4/server/schedule/storelimit"
+	"github.com/tikv/pd/pkg/mock/mockcluster"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/core/storelimit"
+	"github.com/tikv/pd/server/schedule/opt"
 )
 
 func Test(t *testing.T) {
@@ -39,13 +39,13 @@ type testOperatorSuite struct {
 }
 
 func (s *testOperatorSuite) SetUpTest(c *C) {
-	cfg := mockoption.NewScheduleOptions()
-	cfg.MaxMergeRegionSize = 2
-	cfg.MaxMergeRegionKeys = 2
-	cfg.LabelProperties = map[string][]*metapb.StoreLabel{
-		opt.RejectLeader: {{Key: "reject", Value: "leader"}},
-	}
+	cfg := config.NewTestOptions()
 	s.cluster = mockcluster.NewCluster(cfg)
+	s.cluster.SetMaxMergeRegionSize(2)
+	s.cluster.SetMaxMergeRegionKeys(2)
+	s.cluster.SetLabelPropertyConfig(config.LabelPropertyConfig{
+		opt.RejectLeader: {{Key: "reject", Value: "leader"}},
+	})
 	stores := map[uint64][]string{
 		1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {},
 		7: {"reject", "leader"},

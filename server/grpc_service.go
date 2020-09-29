@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,13 +21,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/cluster"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/pkg/logutil"
+	"github.com/tikv/pd/pkg/tsoutil"
+	"github.com/tikv/pd/server/cluster"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/versioninfo"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -89,7 +94,7 @@ func (s *Server) Tso(stream pdpb.PD_TsoServer) error {
 			return status.Errorf(codes.FailedPrecondition, "mismatch cluster id, need %d but got %d", s.clusterID, request.GetHeader().GetClusterId())
 		}
 		count := request.GetCount()
-		ts, err := s.tso.GetRespTS(count)
+		ts, err := s.tsoAllocatorManager.HandleTSORequest(request.GetDcLocation(), count)
 		if err != nil {
 			return status.Errorf(codes.Unknown, err.Error())
 		}
@@ -295,10 +300,22 @@ func (s *Server) StoreHeartbeat(ctx context.Context, request *pdpb.StoreHeartbea
 		}, nil
 	}
 
+	storeID := request.Stats.GetStoreId()
+	store := rc.GetStore(storeID)
+	if store == nil {
+		return nil, errors.Errorf("store %v not found", storeID)
+	}
+
+	storeAddress := store.GetAddress()
+	storeLabel := strconv.FormatUint(storeID, 10)
+	start := time.Now()
+
 	err := rc.HandleStoreHeartbeat(request.Stats)
 	if err != nil {
 		return nil, status.Errorf(codes.Unknown, err.Error())
 	}
+
+	storeHeartbeatHandleDuration.WithLabelValues(storeAddress, storeLabel).Observe(time.Since(start).Seconds())
 
 	return &pdpb.StoreHeartbeatResponse{
 		Header:            s.header(),
@@ -393,21 +410,37 @@ func (s *Server) RegionHeartbeat(stream pdpb.PD_RegionHeartbeatServer) error {
 
 		region := core.RegionFromHeartbeat(request)
 		if region.GetLeader() == nil {
-			log.Error("invalid request, the leader is nil", zap.Reflect("reqeust", request))
+			log.Error("invalid request, the leader is nil", zap.Reflect("request", request), errs.ZapError(errs.ErrLeaderNil))
 			continue
 		}
 		if region.GetID() == 0 {
+			regionHeartbeatCounter.WithLabelValues(storeAddress, storeLabel, "report", "err").Inc()
 			msg := fmt.Sprintf("invalid request region, %v", request)
-			s.hbStreams.sendErr(pdpb.ErrorType_UNKNOWN, msg, request.GetLeader(), storeAddress, storeLabel)
+			s.hbStreams.SendErr(pdpb.ErrorType_UNKNOWN, msg, request.GetLeader())
 			continue
 		}
 
-		err = rc.HandleRegionHeartbeat(region)
-		if err != nil {
-			msg := err.Error()
-			s.hbStreams.sendErr(pdpb.ErrorType_UNKNOWN, msg, request.GetLeader(), storeAddress, storeLabel)
+		// If the region peer count is 0, then we should not handle this.
+		if len(region.GetPeers()) == 0 {
+			log.Warn("invalid region, zero region peer count",
+				logutil.ZapRedactStringer("region-meta", core.RegionToHexMeta(region.GetMeta())))
+			regionHeartbeatCounter.WithLabelValues(storeAddress, storeLabel, "report", "err").Inc()
+			msg := fmt.Sprintf("invalid region, zero region peer count: %v", logutil.RedactStringer(core.RegionToHexMeta(region.GetMeta())))
+			s.hbStreams.SendErr(pdpb.ErrorType_UNKNOWN, msg, request.GetLeader())
+			continue
 		}
 
+		start := time.Now()
+
+		err = rc.HandleRegionHeartbeat(region)
+		if err != nil {
+			regionHeartbeatCounter.WithLabelValues(storeAddress, storeLabel, "report", "err").Inc()
+			msg := err.Error()
+			s.hbStreams.SendErr(pdpb.ErrorType_UNKNOWN, msg, request.GetLeader())
+			continue
+		}
+
+		regionHeartbeatHandleDuration.WithLabelValues(storeAddress, storeLabel).Observe(time.Since(start).Seconds())
 		regionHeartbeatCounter.WithLabelValues(storeAddress, storeLabel, "report", "ok").Inc()
 	}
 }
@@ -551,7 +584,7 @@ func (s *Server) AskBatchSplit(ctx context.Context, request *pdpb.AskBatchSplitR
 		return &pdpb.AskBatchSplitResponse{Header: s.notBootstrappedHeader()}, nil
 	}
 
-	if !rc.IsFeatureSupported(cluster.BatchSplit) {
+	if !rc.IsFeatureSupported(versioninfo.BatchSplit) {
 		return &pdpb.AskBatchSplitResponse{Header: s.incompatibleVersion("batch_split")}, nil
 	}
 	if request.GetRegion() == nil {
@@ -674,7 +707,7 @@ func (s *Server) ScatterRegion(ctx context.Context, request *pdpb.ScatterRegionR
 		return nil, errors.Errorf("region %d is a hot region", region.GetID())
 	}
 
-	op, err := rc.GetRegionScatter().Scatter(region)
+	op, err := rc.GetRegionScatter().Scatter(region, request.GetGroup())
 	if err != nil {
 		return nil, err
 	}
@@ -774,7 +807,12 @@ func (s *Server) UpdateServiceGCSafePoint(ctx context.Context, request *pdpb.Upd
 		}
 	}
 
-	min, err := s.storage.LoadMinServiceGCSafePoint()
+	nowTSO, err := s.tsoAllocatorManager.HandleTSORequest(config.GlobalDCLocation, 1)
+	if err != nil {
+		return nil, err
+	}
+	now, _ := tsoutil.ParseTimestamp(nowTSO)
+	min, err := s.storage.LoadMinServiceGCSafePoint(now)
 	if err != nil {
 		return nil, err
 	}
@@ -782,7 +820,7 @@ func (s *Server) UpdateServiceGCSafePoint(ctx context.Context, request *pdpb.Upd
 	if request.TTL > 0 && request.SafePoint >= min.SafePoint {
 		ssp := &core.ServiceSafePoint{
 			ServiceID: string(request.ServiceId),
-			ExpiredAt: time.Now().Unix() + request.TTL,
+			ExpiredAt: now.Unix() + request.TTL,
 			SafePoint: request.SafePoint,
 		}
 		if err := s.storage.SaveServiceGCSafePoint(ssp); err != nil {
@@ -794,7 +832,7 @@ func (s *Server) UpdateServiceGCSafePoint(ctx context.Context, request *pdpb.Upd
 			zap.Uint64("safepoint", ssp.SafePoint))
 		// If the min safepoint is updated, load the next one
 		if string(request.ServiceId) == min.ServiceID {
-			min, err = s.storage.LoadMinServiceGCSafePoint()
+			min, err = s.storage.LoadMinServiceGCSafePoint(now)
 			if err != nil {
 				return nil, err
 			}
@@ -808,12 +846,12 @@ func (s *Server) UpdateServiceGCSafePoint(ctx context.Context, request *pdpb.Upd
 	return &pdpb.UpdateServiceGCSafePointResponse{
 		Header:       s.header(),
 		ServiceId:    []byte(min.ServiceID),
-		TTL:          min.ExpiredAt - time.Now().Unix(),
+		TTL:          min.ExpiredAt - now.Unix(),
 		MinSafePoint: min.SafePoint,
 	}, nil
 }
 
-// GetOperator gets information about the operator belonging to the speicfy region.
+// GetOperator gets information about the operator belonging to the specify region.
 func (s *Server) GetOperator(ctx context.Context, request *pdpb.GetOperatorRequest) (*pdpb.GetOperatorResponse, error) {
 	if err := s.validateRequest(request.GetHeader()); err != nil {
 		return nil, err
@@ -845,7 +883,7 @@ func (s *Server) GetOperator(ctx context.Context, request *pdpb.GetOperatorReque
 }
 
 // validateRequest checks if Server is leader and clusterID is matched.
-// TODO: Call it in gRPC intercepter.
+// TODO: Call it in gRPC interceptor.
 func (s *Server) validateRequest(header *pdpb.RequestHeader) error {
 	if s.IsClosed() || !s.member.IsLeader() {
 		return errors.WithStack(ErrNotLeader)
@@ -880,4 +918,76 @@ func (s *Server) incompatibleVersion(tag string) *pdpb.ResponseHeader {
 		Type:    pdpb.ErrorType_INCOMPATIBLE_VERSION,
 		Message: msg,
 	})
+}
+
+// SyncMaxTS is a RPC method used to synchronize the timestamp of TSO between the
+// Global TSO Allocator and multi Local TSO Allocator leaders. It contains two
+// phases:
+// 1. Collect timestamps among all Local TSO Allocator leaders, and choose the
+//    greatest one as MaxTS.
+// 2. Send the MaxTS to all Local TSO Allocator leaders. They will compare MaxTS
+//    with its current TSO in memory to make sure their local TSOs are not less
+//    than MaxTS by writing MaxTS into memory to finish the global TSO synchronization.
+func (s *Server) SyncMaxTS(ctx context.Context, request *pdpb.SyncMaxTSRequest) (*pdpb.SyncMaxTSResponse, error) {
+	if err := s.validateInternalRequest(request.GetHeader()); err != nil {
+		return nil, err
+	}
+	tsoAllocatorManager := s.GetTSOAllocatorManager()
+	// Get all Local TSO Allocator leaders
+	allocatorLeaders, err := tsoAllocatorManager.GetLocalAllocatorLeaders()
+	if err != nil {
+		return nil, err
+	}
+	var processedDCs []string
+	if request.GetMaxTs() == nil || request.GetMaxTs().Physical == 0 {
+		// The first phase of synchronization: collect the max local ts
+		var maxLocalTS pdpb.Timestamp
+		for _, allocator := range allocatorLeaders {
+			// No longer leader, just skip here because
+			// the global allocator will check if all DCs are handled.
+			if !allocator.IsStillAllocatorLeader() {
+				continue
+			}
+			currentLocalTSO, err := allocator.GetCurrentTSO()
+			if err != nil {
+				return nil, err
+			}
+			if currentLocalTSO.Physical > maxLocalTS.Physical {
+				maxLocalTS.Physical = currentLocalTSO.Physical
+			}
+			processedDCs = append(processedDCs, allocator.GetDCLocation())
+		}
+		return &pdpb.SyncMaxTSResponse{
+			Header:     s.header(),
+			MaxLocalTs: &maxLocalTS,
+			Dcs:        processedDCs,
+		}, nil
+	}
+	// The second phase of synchronization: do the writing
+	for _, allocator := range allocatorLeaders {
+		if !allocator.IsStillAllocatorLeader() {
+			continue
+		}
+		if err := allocator.WriteTSO(request.GetMaxTs()); err != nil {
+			return nil, err
+		}
+		processedDCs = append(processedDCs, allocator.GetDCLocation())
+	}
+	return &pdpb.SyncMaxTSResponse{
+		Header: s.header(),
+		Dcs:    processedDCs,
+	}, nil
+}
+
+// validateInternalRequest checks if server is closed, which is used to validate
+// the gRPC communication between PD servers internally.
+func (s *Server) validateInternalRequest(header *pdpb.RequestHeader) error {
+	if s.IsClosed() {
+		return errors.WithStack(ErrNotStarted)
+	}
+	leaderID := s.GetLeader().GetMemberId()
+	if leaderID != header.GetSenderId() {
+		return status.Errorf(codes.FailedPrecondition, "mismatch leader id, need %d but got %d", leaderID, header.GetSenderId())
+	}
+	return nil
 }

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/pkg/mock/mockid"
-	"github.com/pingcap/pd/v4/server/id"
+	"github.com/tikv/pd/pkg/mock/mockid"
+	"github.com/tikv/pd/server/id"
 )
 
 func TestCore(t *testing.T) {
@@ -116,16 +116,16 @@ func (*testRegionKey) TestRegionKey(c *C) {
 		c.Assert(strings.Contains(s, t.expect), IsTrue)
 
 		// start key changed
-		orgion := NewRegionInfo(&metapb.Region{EndKey: []byte(got)}, nil)
+		origin := NewRegionInfo(&metapb.Region{EndKey: []byte(got)}, nil)
 		region := NewRegionInfo(&metapb.Region{StartKey: []byte(got), EndKey: []byte(got)}, nil)
-		s = DiffRegionKeyInfo(orgion, region)
+		s = DiffRegionKeyInfo(origin, region)
 		c.Assert(s, Matches, ".*StartKey Changed.*")
 		c.Assert(strings.Contains(s, t.expect), IsTrue)
 
 		// end key changed
-		orgion = NewRegionInfo(&metapb.Region{StartKey: []byte(got)}, nil)
+		origin = NewRegionInfo(&metapb.Region{StartKey: []byte(got)}, nil)
 		region = NewRegionInfo(&metapb.Region{StartKey: []byte(got), EndKey: []byte(got)}, nil)
-		s = DiffRegionKeyInfo(orgion, region)
+		s = DiffRegionKeyInfo(origin, region)
 		c.Assert(s, Matches, ".*EndKey Changed.*")
 		c.Assert(strings.Contains(s, t.expect), IsTrue)
 	}

@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,11 +21,11 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/config"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/tests"
-	"github.com/pingcap/pd/v4/tests/pdctl"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/tests"
+	"github.com/tikv/pd/tests/pdctl"
 )
 
 func Test(t *testing.T) {
@@ -47,8 +47,8 @@ func (s *operatorTestSuite) TestOperator(c *C) {
 	var t time.Time
 	t = t.Add(time.Hour)
 	cluster, err := tests.NewTestCluster(ctx, 1,
-		func(conf *config.Config) { conf.Replication.MaxReplicas = 2 },
-		func(conf *config.Config) { conf.Schedule.MaxStoreDownTime.Duration = time.Since(t) },
+		func(conf *config.Config, serverName string) { conf.Replication.MaxReplicas = 2 },
+		func(conf *config.Config, serverName string) { conf.Schedule.MaxStoreDownTime.Duration = time.Since(t) },
 	)
 	c.Assert(err, IsNil)
 	err = cluster.RunInitialServers()

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,20 +21,22 @@ import (
 	"syscall"
 
 	grpcprometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/pkg/dashboard"
-	"github.com/pingcap/pd/v4/pkg/logutil"
-	"github.com/pingcap/pd/v4/pkg/metricutil"
-	"github.com/pingcap/pd/v4/pkg/swaggerserver"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/api"
-	"github.com/pingcap/pd/v4/server/config"
-	"github.com/pingcap/pd/v4/server/join"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/autoscaling"
+	"github.com/tikv/pd/pkg/dashboard"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/pkg/logutil"
+	"github.com/tikv/pd/pkg/metricutil"
+	"github.com/tikv/pd/pkg/swaggerserver"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/api"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/join"
 	"go.uber.org/zap"
 
 	// Register schedulers.
-	_ "github.com/pingcap/pd/v4/server/schedulers"
+	_ "github.com/tikv/pd/server/schedulers"
 )
 
 func main() {
@@ -53,7 +55,7 @@ func main() {
 	case flag.ErrHelp:
 		exit(0)
 	default:
-		log.Fatal("parse cmd flags error", zap.Error(err))
+		log.Fatal("parse cmd flags error", errs.ZapError(errs.ErrParseFlags))
 	}
 
 	if cfg.ConfigCheck {
@@ -66,7 +68,7 @@ func main() {
 	if err == nil {
 		log.ReplaceGlobals(cfg.GetZapLogger(), cfg.GetZapLogProperties())
 	} else {
-		log.Fatal("initialize logger error", zap.Error(err))
+		log.Fatal("initialize logger error", errs.ZapError(err))
 	}
 	// Flushing any buffered log entries
 	defer log.Sync()
@@ -74,7 +76,7 @@ func main() {
 	// The old logger
 	err = logutil.InitLogger(&cfg.Log)
 	if err != nil {
-		log.Fatal("initialize logger error", zap.Error(err))
+		log.Fatal("initialize logger error", errs.ZapError(err))
 	}
 
 	server.LogPDInfo()
@@ -90,16 +92,16 @@ func main() {
 
 	err = join.PrepareJoinCluster(cfg)
 	if err != nil {
-		log.Fatal("join meet error", zap.Error(err))
+		log.Fatal("join meet error", errs.ZapError(err))
 	}
 
 	// Creates server.
 	ctx, cancel := context.WithCancel(context.Background())
-	serviceBuilders := []server.HandlerBuilder{api.NewHandler, swaggerserver.NewHandler}
+	serviceBuilders := []server.HandlerBuilder{api.NewHandler, swaggerserver.NewHandler, autoscaling.NewHandler}
 	serviceBuilders = append(serviceBuilders, dashboard.GetServiceBuilders()...)
 	svr, err := server.CreateServer(ctx, cfg, serviceBuilders...)
 	if err != nil {
-		log.Fatal("create server failed", zap.Error(err))
+		log.Fatal("create server failed", errs.ZapError(err))
 	}
 
 	sc := make(chan os.Signal, 1)
@@ -116,7 +118,7 @@ func main() {
 	}()
 
 	if err := svr.Run(); err != nil {
-		log.Fatal("run server failed", zap.Error(err))
+		log.Fatal("run server failed", errs.ZapError(err))
 	}
 
 	<-ctx.Done()

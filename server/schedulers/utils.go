@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,15 +17,15 @@ import (
 	"math"
 	"net/url"
 	"strconv"
-	"time"
 
 	"github.com/montanaflynn/stats"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pingcap/pd/v4/server/statistics"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
+	"github.com/tikv/pd/server/statistics"
 	"go.uber.org/zap"
 )
 
@@ -36,37 +36,7 @@ const (
 	minTolerantSizeRatio    float64 = 1.0
 )
 
-var (
-	// ErrSchedulerExisted is error info for scheduler has already existed.
-	ErrSchedulerExisted = errors.New("scheduler existed")
-	// ErrSchedulerNotFound is error info for scheduler is not found.
-	ErrSchedulerNotFound = errors.New("scheduler not found")
-	// ErrScheduleConfigNotExist the config is not correct.
-	ErrScheduleConfigNotExist = errors.New("the config does not exist")
-)
-
-func minUint64(a, b uint64) uint64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func maxUint64(a, b uint64) uint64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func minDuration(a, b time.Duration) time.Duration {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func shouldBalance(cluster opt.Cluster, source, target *core.StoreInfo, region *core.RegionInfo, kind core.ScheduleKind, opInfluence operator.OpInfluence, scheduleName string) bool {
+func shouldBalance(cluster opt.Cluster, source, target *core.StoreInfo, region *core.RegionInfo, kind core.ScheduleKind, opInfluence operator.OpInfluence, scheduleName string) (shouldBalance bool, sourceScore float64, targetScore float64) {
 	// The reason we use max(regionSize, averageRegionSize) to check is:
 	// 1. prevent moving small regions between stores with close scores, leading to unnecessary balance.
 	// 2. prevent moving huge regions, leading to over balance.
@@ -75,15 +45,16 @@ func shouldBalance(cluster opt.Cluster, source, target *core.StoreInfo, region *
 	tolerantResource := getTolerantResource(cluster, region, kind)
 	sourceInfluence := opInfluence.GetStoreInfluence(sourceID).ResourceProperty(kind)
 	targetInfluence := opInfluence.GetStoreInfluence(targetID).ResourceProperty(kind)
-	sourceScore := source.ResourceScore(kind, cluster.GetHighSpaceRatio(), cluster.GetLowSpaceRatio(), sourceInfluence-tolerantResource)
-	targetScore := target.ResourceScore(kind, cluster.GetHighSpaceRatio(), cluster.GetLowSpaceRatio(), targetInfluence+tolerantResource)
-	if cluster.IsDebugMetricsEnabled() {
+	opts := cluster.GetOpts()
+	sourceScore = source.ResourceScore(kind, opts.GetHighSpaceRatio(), opts.GetLowSpaceRatio(), sourceInfluence-tolerantResource)
+	targetScore = target.ResourceScore(kind, opts.GetHighSpaceRatio(), opts.GetLowSpaceRatio(), targetInfluence+tolerantResource)
+	if opts.IsDebugMetricsEnabled() {
 		opInfluenceStatus.WithLabelValues(scheduleName, strconv.FormatUint(sourceID, 10), "source").Set(float64(sourceInfluence))
 		opInfluenceStatus.WithLabelValues(scheduleName, strconv.FormatUint(targetID, 10), "target").Set(float64(targetInfluence))
 		tolerantResourceStatus.WithLabelValues(scheduleName, strconv.FormatUint(sourceID, 10), strconv.FormatUint(targetID, 10)).Set(float64(tolerantResource))
 	}
 	// Make sure after move, source score is still greater than target score.
-	shouldBalance := sourceScore > targetScore
+	shouldBalance = sourceScore > targetScore
 
 	if !shouldBalance {
 		log.Debug("skip balance "+kind.Resource.String(),
@@ -95,12 +66,12 @@ func shouldBalance(cluster opt.Cluster, source, target *core.StoreInfo, region *
 			zap.Int64("average-region-size", cluster.GetAverageRegionSize()),
 			zap.Int64("tolerant-resource", tolerantResource))
 	}
-	return shouldBalance
+	return shouldBalance, sourceScore, targetScore
 }
 
 func getTolerantResource(cluster opt.Cluster, region *core.RegionInfo, kind core.ScheduleKind) int64 {
 	if kind.Resource == core.LeaderKind && kind.Policy == core.ByCount {
-		tolerantSizeRatio := cluster.GetTolerantSizeRatio()
+		tolerantSizeRatio := cluster.GetOpts().GetTolerantSizeRatio()
 		if tolerantSizeRatio == 0 {
 			tolerantSizeRatio = leaderTolerantSizeRatio
 		}
@@ -117,7 +88,7 @@ func getTolerantResource(cluster opt.Cluster, region *core.RegionInfo, kind core
 }
 
 func adjustTolerantRatio(cluster opt.Cluster) float64 {
-	tolerantSizeRatio := cluster.GetTolerantSizeRatio()
+	tolerantSizeRatio := cluster.GetOpts().GetTolerantSizeRatio()
 	if tolerantSizeRatio == 0 {
 		var maxRegionCount float64
 		stores := cluster.GetStores()
@@ -144,7 +115,7 @@ func adjustBalanceLimit(cluster opt.Cluster, kind core.ResourceKind) uint64 {
 		}
 	}
 	limit, _ := stats.StandardDeviation(counts)
-	return maxUint64(1, uint64(limit))
+	return typeutil.MaxUint64(1, uint64(limit))
 }
 
 func getKeyRanges(args []string) ([]core.KeyRange, error) {
@@ -152,11 +123,11 @@ func getKeyRanges(args []string) ([]core.KeyRange, error) {
 	for len(args) > 1 {
 		startKey, err := url.QueryUnescape(args[0])
 		if err != nil {
-			return nil, err
+			return nil, errs.ErrQueryUnescape.Wrap(err).FastGenWithCause()
 		}
 		endKey, err := url.QueryUnescape(args[1])
 		if err != nil {
-			return nil, err
+			return nil, errs.ErrQueryUnescape.Wrap(err).FastGenWithCause()
 		}
 		args = args[2:]
 		ranges = append(ranges, core.NewKeyRange(startKey, endKey))
@@ -197,6 +168,8 @@ func newPendingInfluence(op *operator.Operator, from, to uint64, infl Influence)
 	}
 }
 
+// summaryPendingInfluence calculate the summary pending Influence for each store and return storeID -> Influence
+// It makes each key/byte rate or count become (1+w) times to the origin value while f is the function to provide w(weight)
 func summaryPendingInfluence(pendings map[*pendingInfluence]struct{}, f func(*operator.Operator) float64) map[uint64]Influence {
 	ret := map[uint64]Influence{}
 	for p := range pendings {
@@ -215,6 +188,7 @@ type storeLoad struct {
 	KeyRate  float64
 	Count    float64
 
+	// Exp means Expectation, it is calculated from the average value from summary of byte/key rate, count.
 	ExpByteRate float64
 	ExpKeyRate  float64
 	ExpCount    float64

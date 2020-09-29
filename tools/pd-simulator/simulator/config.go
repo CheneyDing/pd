@@ -5,9 +5,9 @@ import (
 	"io/ioutil"
 	"time"
 
-	"github.com/pingcap/pd/v4/pkg/tempurl"
-	"github.com/pingcap/pd/v4/pkg/typeutil"
-	"github.com/pingcap/pd/v4/server/config"
+	"github.com/tikv/pd/pkg/tempurl"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server/config"
 )
 
 const (
@@ -20,7 +20,7 @@ const (
 	defaultStoreVersion       = "2.1.0"
 	// server
 	defaultLeaderLease                 = 1
-	defaultTsoSaveInterval             = 200 * time.Millisecond
+	defaultTSOSaveInterval             = 200 * time.Millisecond
 	defaultTickInterval                = 100 * time.Millisecond
 	defaultElectionInterval            = 3 * time.Second
 	defaultLeaderPriorityCheckInterval = 100 * time.Millisecond
@@ -41,6 +41,7 @@ type SimConfig struct {
 
 // NewSimConfig create a new configuration of the simulator.
 func NewSimConfig(serverLogLevel string) *SimConfig {
+	config.DefaultStoreLimit = config.StoreLimit{AddPeer: 2000, RemovePeer: 2000}
 	cfg := &config.Config{
 		Name:       "pd",
 		ClientUrls: tempurl.Alloc(),
@@ -87,7 +88,7 @@ func (sc *SimConfig) Adjust() error {
 	adjustInt64(&sc.StoreIOMBPerSecond, defaultStoreIOMBPerSecond)
 	adjustString(&sc.StoreVersion, defaultStoreVersion)
 	adjustInt64(&sc.ServerConfig.LeaderLease, defaultLeaderLease)
-	adjustDuration(&sc.ServerConfig.TsoSaveInterval, defaultTsoSaveInterval)
+	adjustDuration(&sc.ServerConfig.TSOSaveInterval, defaultTSOSaveInterval)
 	adjustDuration(&sc.ServerConfig.TickInterval, defaultTickInterval)
 	adjustDuration(&sc.ServerConfig.ElectionInterval, defaultElectionInterval)
 	adjustDuration(&sc.ServerConfig.LeaderPriorityCheckInterval, defaultLeaderPriorityCheckInterval)

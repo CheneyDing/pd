@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import (
 var Logger *zap.Logger
 
 // InitLogger initializes the Logger with -log level.
-func InitLogger(l string) {
-	conf := &log.Config{Level: l, File: log.FileLogConfig{}}
+func InitLogger(l, file string) {
+	conf := &log.Config{Level: l, File: log.FileLogConfig{Filename: file}}
 	lg, _, _ := log.InitLogger(conf)
 	Logger = lg
 }

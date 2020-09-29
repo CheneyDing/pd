@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2020 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,8 +14,8 @@
 package filter
 
 import (
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
 )
 
 // StoreComparer compares 2 stores. Often used for StoreCandidates to
@@ -24,7 +24,7 @@ type StoreComparer func(a, b *core.StoreInfo) int
 
 // RegionScoreComparer creates a StoreComparer to sort store by region
 // score.
-func RegionScoreComparer(opt opt.Options) StoreComparer {
+func RegionScoreComparer(opt *config.PersistOptions) StoreComparer {
 	return func(a, b *core.StoreInfo) int {
 		sa := a.RegionScore(opt.GetHighSpaceRatio(), opt.GetLowSpaceRatio(), 0)
 		sb := b.RegionScore(opt.GetHighSpaceRatio(), opt.GetLowSpaceRatio(), 0)

@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@ import (
 	"context"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/tools/pd-simulator/simulator/cases"
-	"github.com/pingcap/pd/v4/tools/pd-simulator/simulator/simutil"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/tools/pd-simulator/simulator/cases"
+	"github.com/tikv/pd/tools/pd-simulator/simulator/simutil"
 	"go.uber.org/zap"
 )
 
@@ -216,7 +216,7 @@ func (r *RaftEngine) updateRegionReadBytes(readBytes map[uint64]int64) {
 
 func (r *RaftEngine) electNewLeader(region *core.RegionInfo) *metapb.Peer {
 	var (
-		unhealth         int
+		unhealthy        int
 		newLeaderStoreID uint64
 	)
 	ids := region.GetStoreIds()
@@ -224,10 +224,10 @@ func (r *RaftEngine) electNewLeader(region *core.RegionInfo) *metapb.Peer {
 		if r.conn.nodeHealth(id) {
 			newLeaderStoreID = id
 		} else {
-			unhealth++
+			unhealthy++
 		}
 	}
-	if unhealth > len(ids)/2 {
+	if unhealthy > len(ids)/2 {
 		return nil
 	}
 	for _, peer := range region.GetPeers() {

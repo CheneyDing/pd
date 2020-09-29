@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,19 +24,19 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/pkg/logutil"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/api"
-	"github.com/pingcap/pd/v4/server/config"
-	"github.com/pingcap/pd/v4/server/statistics"
-	"github.com/pingcap/pd/v4/tools/pd-analysis/analysis"
-	"github.com/pingcap/pd/v4/tools/pd-simulator/simulator"
-	"github.com/pingcap/pd/v4/tools/pd-simulator/simulator/cases"
-	"github.com/pingcap/pd/v4/tools/pd-simulator/simulator/simutil"
+	"github.com/tikv/pd/pkg/logutil"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/api"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/statistics"
+	"github.com/tikv/pd/tools/pd-analysis/analysis"
+	"github.com/tikv/pd/tools/pd-simulator/simulator"
+	"github.com/tikv/pd/tools/pd-simulator/simulator/cases"
+	"github.com/tikv/pd/tools/pd-simulator/simulator/simutil"
 	"go.uber.org/zap"
 
 	// Register schedulers.
-	_ "github.com/pingcap/pd/v4/server/schedulers"
+	_ "github.com/tikv/pd/server/schedulers"
 )
 
 var (
@@ -45,6 +45,7 @@ var (
 	caseName                    = flag.String("case", "", "case name")
 	serverLogLevel              = flag.String("serverLog", "fatal", "pd server log level")
 	simLogLevel                 = flag.String("simLog", "fatal", "simulator log level")
+	simLogFile                  = flag.String("simLogFile", "", "simulator log file")
 	regionNum                   = flag.Int("regionNum", 0, "regionNum of one store")
 	storeNum                    = flag.Int("storeNum", 0, "storeNum")
 	enableTransferRegionCounter = flag.Bool("enableTransferRegionCounter", false, "enableTransferRegionCounter")
@@ -53,7 +54,7 @@ var (
 func main() {
 	flag.Parse()
 
-	simutil.InitLogger(*simLogLevel)
+	simutil.InitLogger(*simLogLevel, *simLogFile)
 	simutil.InitCaseConfig(*storeNum, *regionNum, *enableTransferRegionCounter)
 	statistics.Denoising = false
 	if simutil.CaseConfigure.EnableTransferRegionCounter {

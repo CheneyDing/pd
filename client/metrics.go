@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,6 +59,7 @@ var (
 	cmdDurationTSO                      = cmdDuration.WithLabelValues("tso")
 	cmdDurationTSOAsyncWait             = cmdDuration.WithLabelValues("tso_async_wait")
 	cmdDurationGetRegion                = cmdDuration.WithLabelValues("get_region")
+	cmdDurationGetAllMembers            = cmdDuration.WithLabelValues("get_member_info")
 	cmdDurationGetPrevRegion            = cmdDuration.WithLabelValues("get_prev_region")
 	cmdDurationGetRegionByID            = cmdDuration.WithLabelValues("get_region_byid")
 	cmdDurationScanRegions              = cmdDuration.WithLabelValues("scan_regions")
@@ -71,6 +72,7 @@ var (
 
 	cmdFailDurationGetRegion                  = cmdFailedDuration.WithLabelValues("get_region")
 	cmdFailDurationTSO                        = cmdFailedDuration.WithLabelValues("tso")
+	cmdFailDurationGetAllMembers              = cmdFailedDuration.WithLabelValues("get_member_info")
 	cmdFailDurationGetPrevRegion              = cmdFailedDuration.WithLabelValues("get_prev_region")
 	cmdFailedDurationGetRegionByID            = cmdFailedDuration.WithLabelValues("get_region_byid")
 	cmdFailedDurationScanRegions              = cmdFailedDuration.WithLabelValues("scan_regions")

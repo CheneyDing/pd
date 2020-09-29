@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,20 +21,21 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/pkg/dashboard"
-	"github.com/pingcap/pd/v4/pkg/swaggerserver"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/api"
-	"github.com/pingcap/pd/v4/server/cluster"
-	"github.com/pingcap/pd/v4/server/config"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/id"
-	"github.com/pingcap/pd/v4/server/join"
-	"github.com/pingcap/pd/v4/server/member"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/autoscaling"
+	"github.com/tikv/pd/pkg/dashboard"
+	"github.com/tikv/pd/pkg/swaggerserver"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/api"
+	"github.com/tikv/pd/server/cluster"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/id"
+	"github.com/tikv/pd/server/join"
+	"github.com/tikv/pd/server/tso"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
@@ -76,7 +77,7 @@ func NewTestServer(ctx context.Context, cfg *config.Config) (*TestServer, error)
 	if err != nil {
 		return nil, err
 	}
-	serviceBuilders := []server.HandlerBuilder{api.NewHandler, swaggerserver.NewHandler}
+	serviceBuilders := []server.HandlerBuilder{api.NewHandler, swaggerserver.NewHandler, autoscaling.NewHandler}
 	serviceBuilders = append(serviceBuilders, dashboard.GetServiceBuilders()...)
 	svr, err := server.CreateServer(ctx, cfg, serviceBuilders...)
 	if err != nil {
@@ -132,7 +133,7 @@ func (s *TestServer) Destroy() error {
 func (s *TestServer) ResignLeader() error {
 	s.Lock()
 	defer s.Unlock()
-	return s.server.GetMember().ResignLeader(s.server.Context(), s.server.Name(), "")
+	return s.server.GetMember().ResignEtcdLeader(s.server.Context(), s.server.Name(), "")
 }
 
 // State returns the current TestServer's state.
@@ -320,7 +321,7 @@ func (s *TestServer) BootstrapCluster() error {
 	bootstrapReq := &pdpb.BootstrapRequest{
 		Header: &pdpb.RequestHeader{ClusterId: s.GetClusterID()},
 		Store:  &metapb.Store{Id: 1, Address: "mock://1"},
-		Region: &metapb.Region{Id: 2, Peers: []*metapb.Peer{{Id: 3, StoreId: 1, IsLearner: false}}},
+		Region: &metapb.Region{Id: 2, Peers: []*metapb.Peer{{Id: 3, StoreId: 1, Role: metapb.PeerRole_Voter}}},
 	}
 	_, err := s.server.Bootstrap(context.Background(), bootstrapReq)
 	if err != nil {
@@ -329,17 +330,22 @@ func (s *TestServer) BootstrapCluster() error {
 	return nil
 }
 
-// WaitLease is used to get leader lease.
+// WaitLeader is used to get instant leader info in order to
+// make a test know the PD leader has been elected as soon as possible.
 // If it exceeds the maximum number of loops, it will return nil.
-func (s *TestServer) WaitLease() *member.LeaderLease {
+func (s *TestServer) WaitLeader() bool {
 	for i := 0; i < 100; i++ {
-		lease := s.server.GetLease()
-		if lease != nil {
-			return lease
+		if s.server.GetMember().IsStillLeader() {
+			return true
 		}
 		time.Sleep(WaitLeaderCheckInterval)
 	}
-	return nil
+	return false
+}
+
+// GetTSOAllocatorManager returns the server's TSO Allocator Manager.
+func (s *TestServer) GetTSOAllocatorManager() *tso.AllocatorManager {
+	return s.server.GetTSOAllocatorManager()
 }
 
 // TestCluster is only for test.
@@ -349,7 +355,10 @@ type TestCluster struct {
 }
 
 // ConfigOption is used to define customize settings in test.
-type ConfigOption func(conf *config.Config)
+// You can use serverName to customize a config for a certain
+// server. Usually, the server name will be like `pd1`, `pd2`
+// and so on, which determined by the number of servers you set.
+type ConfigOption func(conf *config.Config, serverName string)
 
 // NewTestCluster creates a new TestCluster.
 func NewTestCluster(ctx context.Context, initialServerCount int, opts ...ConfigOption) (*TestCluster, error) {

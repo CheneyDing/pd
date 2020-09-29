@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@ import (
 	"testing"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/v4/pkg/etcdutil"
-	"github.com/pingcap/pd/v4/pkg/testutil"
-	"github.com/pingcap/pd/v4/server/config"
+	"github.com/tikv/pd/pkg/etcdutil"
+	"github.com/tikv/pd/pkg/testutil"
+	"github.com/tikv/pd/server/config"
 	"go.etcd.io/etcd/embed"
 	"go.etcd.io/etcd/pkg/types"
 	"go.uber.org/goleak"
@@ -175,11 +175,11 @@ func (s *testServerSuite) TestCheckClusterID(c *C) {
 
 	etcd, err := embed.StartEtcd(svr.etcdCfg)
 	c.Assert(err, IsNil)
-	urlmap, err := types.NewURLsMap(svr.cfg.InitialCluster)
+	urlsMap, err := types.NewURLsMap(svr.cfg.InitialCluster)
 	c.Assert(err, IsNil)
 	tlsConfig, err := svr.cfg.Security.ToTLSConfig()
 	c.Assert(err, IsNil)
-	err = etcdutil.CheckClusterID(etcd.Server.Cluster().ID(), urlmap, tlsConfig)
+	err = etcdutil.CheckClusterID(etcd.Server.Cluster().ID(), urlsMap, tlsConfig)
 	c.Assert(err, NotNil)
 	etcd.Close()
 	testutil.CleanServer(cfgA.DataDir)

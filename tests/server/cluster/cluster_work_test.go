@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,10 +21,10 @@ import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/pkg/testutil"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/tests"
+	"github.com/tikv/pd/pkg/testutil"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/tests"
 )
 
 var _ = Suite(&clusterWorkerTestSuite{})
@@ -98,7 +98,7 @@ func (s *clusterWorkerTestSuite) TestAskSplit(c *C) {
 	clusterID := leaderServer.GetClusterID()
 	bootstrapCluster(c, clusterID, grpcPDClient, "127.0.0.1:0")
 	rc := leaderServer.GetRaftCluster()
-	opt := rc.GetOpt()
+	opt := rc.GetOpts()
 	opt.SetSplitMergeInterval(time.Hour)
 	regions := rc.GetRegions()
 
@@ -143,7 +143,7 @@ func (s *clusterWorkerTestSuite) TestSuspectRegions(c *C) {
 	clusterID := leaderServer.GetClusterID()
 	bootstrapCluster(c, clusterID, grpcPDClient, "127.0.0.1:0")
 	rc := leaderServer.GetRaftCluster()
-	opt := rc.GetOpt()
+	opt := rc.GetOpts()
 	opt.SetSplitMergeInterval(time.Hour)
 	regions := rc.GetRegions()
 

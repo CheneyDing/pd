@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ import (
 	"sync"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/pkg/etcdutil"
-	"github.com/pingcap/pd/v4/pkg/typeutil"
-	"github.com/pingcap/pd/v4/server/kv"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/pkg/etcdutil"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server/kv"
 	"go.etcd.io/etcd/clientv3"
 	"go.uber.org/zap"
 )
@@ -101,10 +101,10 @@ func (alloc *AllocatorImpl) generate() (uint64, error) {
 	t := txn.If(append([]clientv3.Cmp{cmp}, clientv3.Compare(clientv3.Value(leaderPath), "=", alloc.member))...)
 	resp, err := t.Then(clientv3.OpPut(key, string(value))).Commit()
 	if err != nil {
-		return 0, err
+		return 0, errs.ErrEtcdTxn.Wrap(err).GenWithStackByArgs()
 	}
 	if !resp.Succeeded {
-		return 0, errors.New("generate id failed, we may not leader")
+		return 0, errs.ErrEtcdTxn.FastGenByArgs()
 	}
 
 	log.Info("idAllocator allocates a new id", zap.Uint64("alloc-id", end))

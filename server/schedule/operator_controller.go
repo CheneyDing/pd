@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,11 +27,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/pkg/cache"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pingcap/pd/v4/server/schedule/storelimit"
+	"github.com/tikv/pd/pkg/cache"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/core/storelimit"
+	"github.com/tikv/pd/server/schedule/hbstream"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
 	"go.uber.org/zap"
 )
 
@@ -58,7 +60,7 @@ type OperatorController struct {
 	ctx             context.Context
 	cluster         opt.Cluster
 	operators       map[uint64]*operator.Operator
-	hbStreams       opt.HeartbeatStreams
+	hbStreams       *hbstream.HeartbeatStreams
 	histories       *list.List
 	counts          map[operator.OpKind]uint64
 	opRecords       *OperatorRecords
@@ -69,7 +71,7 @@ type OperatorController struct {
 }
 
 // NewOperatorController creates a OperatorController.
-func NewOperatorController(ctx context.Context, cluster opt.Cluster, hbStreams opt.HeartbeatStreams) *OperatorController {
+func NewOperatorController(ctx context.Context, cluster opt.Cluster, hbStreams *hbstream.HeartbeatStreams) *OperatorController {
 	return &OperatorController{
 		ctx:             ctx,
 		cluster:         cluster,
@@ -91,7 +93,7 @@ func (oc *OperatorController) Ctx() context.Context {
 	return oc.ctx
 }
 
-// GetCluster exports cluster to evict-scheduler for check sctore status.
+// GetCluster exports cluster to evict-scheduler for check store status.
 func (oc *OperatorController) GetCluster() opt.Cluster {
 	oc.RLock()
 	defer oc.RUnlock()
@@ -134,7 +136,7 @@ func (oc *OperatorController) Dispatch(region *core.RegionInfo, source string) {
 				log.Error("dispatching operator with unexpected status",
 					zap.Uint64("region-id", op.RegionID()),
 					zap.String("status", operator.OpStatusToString(op.Status())),
-					zap.Reflect("operator", op))
+					zap.Reflect("operator", op), errs.ZapError(errs.ErrUnexpectedOperatorStatus))
 				operatorCounter.WithLabelValues(op.Desc(), "unexpected").Inc()
 				failpoint.Inject("unexpectedOperator", func() {
 					panic(op)
@@ -163,7 +165,7 @@ func (oc *OperatorController) checkStaleOperator(op *operator.Operator, step ope
 	origin := op.RegionEpoch()
 	latest := region.GetRegionEpoch()
 	changes := latest.GetConfVer() - origin.GetConfVer()
-	if changes > uint64(op.ConfVerChanged(region)) {
+	if changes > op.ConfVerChanged(region) {
 		if oc.RemoveOperator(
 			op,
 			zap.String("reason", "stale operator, confver does not meet expectations"),
@@ -182,7 +184,7 @@ func (oc *OperatorController) checkStaleOperator(op *operator.Operator, step ope
 func (oc *OperatorController) getNextPushOperatorTime(step operator.OpStep, now time.Time) time.Time {
 	nextTime := slowNotifyInterval
 	switch step.(type) {
-	case operator.TransferLeader, operator.PromoteLearner:
+	case operator.TransferLeader, operator.PromoteLearner, operator.DemoteFollower, operator.ChangePeerV2Enter, operator.ChangePeerV2Leave:
 		nextTime = fastNotifyInterval
 	}
 	return now.Add(nextTime)
@@ -258,13 +260,13 @@ func (oc *OperatorController) AddWaitingOperator(ops ...*operator.Operator) int 
 		if op.Kind()&operator.OpMerge != 0 {
 			if i+1 >= len(ops) {
 				// should not be here forever
-				log.Error("orphan merge operators found", zap.String("desc", desc))
+				log.Error("orphan merge operators found", zap.String("desc", desc), errs.ZapError(errs.ErrMergeOperator.FastGenByArgs("orphan operator found")))
 				oc.Unlock()
 				return added
 			}
 			if ops[i+1].Kind()&operator.OpMerge == 0 {
 				log.Error("merge operator should be paired", zap.String("desc",
-					ops[i+1].Desc()))
+					ops[i+1].Desc()), errs.ZapError(errs.ErrMergeOperator.FastGenByArgs("operator should be paired")))
 				oc.Unlock()
 				return added
 			}
@@ -390,15 +392,15 @@ func (oc *OperatorController) checkAddOperator(ops ...*operator.Operator) bool {
 			log.Error("trying to add operator with unexpected status",
 				zap.Uint64("region-id", op.RegionID()),
 				zap.String("status", operator.OpStatusToString(op.Status())),
-				zap.Reflect("operator", op))
+				zap.Reflect("operator", op), errs.ZapError(errs.ErrUnexpectedOperatorStatus))
 			failpoint.Inject("unexpectedOperator", func() {
 				panic(op)
 			})
 			operatorWaitCounter.WithLabelValues(op.Desc(), "add_canceled").Inc()
 			return false
 		}
-		if oc.wopStatus.ops[op.Desc()] >= oc.cluster.GetSchedulerMaxWaitingOperator() {
-			log.Debug("exceed_max return false", zap.Uint64("waiting", oc.wopStatus.ops[op.Desc()]), zap.String("desc", op.Desc()), zap.Uint64("max", oc.cluster.GetSchedulerMaxWaitingOperator()))
+		if oc.wopStatus.ops[op.Desc()] >= oc.cluster.GetOpts().GetSchedulerMaxWaitingOperator() {
+			log.Debug("exceed_max return false", zap.Uint64("waiting", oc.wopStatus.ops[op.Desc()]), zap.String("desc", op.Desc()), zap.Uint64("max", oc.cluster.GetOpts().GetSchedulerMaxWaitingOperator()))
 			operatorWaitCounter.WithLabelValues(op.Desc(), "exceed_max").Inc()
 			return false
 		}
@@ -422,7 +424,8 @@ func (oc *OperatorController) addOperatorLocked(op *operator.Operator) bool {
 
 	log.Info("add operator",
 		zap.Uint64("region-id", regionID),
-		zap.Reflect("operator", op))
+		zap.Reflect("operator", op),
+		zap.String("additional info", op.GetAdditionalInfo()))
 
 	// If there is an old operator, replace it. The priority should be checked
 	// already.
@@ -436,7 +439,7 @@ func (oc *OperatorController) addOperatorLocked(op *operator.Operator) bool {
 		log.Error("adding operator with unexpected status",
 			zap.Uint64("region-id", regionID),
 			zap.String("status", operator.OpStatusToString(op.Status())),
-			zap.Reflect("operator", op))
+			zap.Reflect("operator", op), errs.ZapError(errs.ErrUnexpectedOperatorStatus))
 		failpoint.Inject("unexpectedOperator", func() {
 			panic(op)
 		})
@@ -482,7 +485,7 @@ func (oc *OperatorController) addOperatorLocked(op *operator.Operator) bool {
 }
 
 // RemoveOperator removes a operator from the running operators.
-func (oc *OperatorController) RemoveOperator(op *operator.Operator, extraFileds ...zap.Field) bool {
+func (oc *OperatorController) RemoveOperator(op *operator.Operator, extraFields ...zap.Field) bool {
 	oc.Lock()
 	removed := oc.removeOperatorLocked(op)
 	oc.Unlock()
@@ -493,7 +496,7 @@ func (oc *OperatorController) RemoveOperator(op *operator.Operator, extraFileds 
 				zap.Duration("takes", op.RunningTime()),
 				zap.Reflect("operator", op))
 		}
-		oc.buryOperator(op, extraFileds...)
+		oc.buryOperator(op, extraFields...)
 	}
 	return removed
 }
@@ -515,14 +518,14 @@ func (oc *OperatorController) removeOperatorLocked(op *operator.Operator) bool {
 	return false
 }
 
-func (oc *OperatorController) buryOperator(op *operator.Operator, extraFileds ...zap.Field) {
+func (oc *OperatorController) buryOperator(op *operator.Operator, extraFields ...zap.Field) {
 	st := op.Status()
 
 	if !operator.IsEndStatus(st) {
 		log.Error("burying operator with non-end status",
 			zap.Uint64("region-id", op.RegionID()),
 			zap.String("status", operator.OpStatusToString(op.Status())),
-			zap.Reflect("operator", op))
+			zap.Reflect("operator", op), errs.ZapError(errs.ErrUnexpectedOperatorStatus))
 		failpoint.Inject("unexpectedOperator", func() {
 			panic(op)
 		})
@@ -535,9 +538,13 @@ func (oc *OperatorController) buryOperator(op *operator.Operator, extraFileds ..
 		log.Info("operator finish",
 			zap.Uint64("region-id", op.RegionID()),
 			zap.Duration("takes", op.RunningTime()),
-			zap.Reflect("operator", op))
+			zap.Reflect("operator", op),
+			zap.String("additional info", op.GetAdditionalInfo()))
 		operatorCounter.WithLabelValues(op.Desc(), "finish").Inc()
 		operatorDuration.WithLabelValues(op.Desc()).Observe(op.RunningTime().Seconds())
+		for _, counter := range op.FinishedCounters {
+			counter.Inc()
+		}
 	case operator.REPLACED:
 		log.Info("replace old operator",
 			zap.Uint64("region-id", op.RegionID()),
@@ -557,14 +564,14 @@ func (oc *OperatorController) buryOperator(op *operator.Operator, extraFileds ..
 			zap.Reflect("operator", op))
 		operatorCounter.WithLabelValues(op.Desc(), "timeout").Inc()
 	case operator.CANCELED:
-		fileds := []zap.Field{
+		fields := []zap.Field{
 			zap.Uint64("region-id", op.RegionID()),
 			zap.Duration("takes", op.RunningTime()),
 			zap.Reflect("operator", op),
 		}
-		fileds = append(fileds, extraFileds...)
+		fields = append(fields, extraFields...)
 		log.Info("operator canceled",
-			fileds...,
+			fields...,
 		)
 		operatorCounter.WithLabelValues(op.Desc(), "cancel").Inc()
 	}
@@ -615,117 +622,135 @@ func (oc *OperatorController) SendScheduleCommand(region *core.RegionInfo, step 
 		zap.Uint64("region-id", region.GetID()),
 		zap.Stringer("step", step),
 		zap.String("source", source))
+
+	var cmd *pdpb.RegionHeartbeatResponse
 	switch st := step.(type) {
 	case operator.TransferLeader:
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			TransferLeader: &pdpb.TransferLeader{
 				Peer: region.GetStorePeer(st.ToStore),
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
 	case operator.AddPeer:
 		if region.GetStorePeer(st.ToStore) != nil {
 			// The newly added peer is pending.
 			return
 		}
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			ChangePeer: &pdpb.ChangePeer{
 				ChangeType: eraftpb.ConfChangeType_AddNode,
 				Peer: &metapb.Peer{
 					Id:      st.PeerID,
 					StoreId: st.ToStore,
+					Role:    metapb.PeerRole_Voter,
 				},
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
 	case operator.AddLightPeer:
 		if region.GetStorePeer(st.ToStore) != nil {
 			// The newly added peer is pending.
 			return
 		}
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			ChangePeer: &pdpb.ChangePeer{
 				ChangeType: eraftpb.ConfChangeType_AddNode,
 				Peer: &metapb.Peer{
 					Id:      st.PeerID,
 					StoreId: st.ToStore,
+					Role:    metapb.PeerRole_Voter,
 				},
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
 	case operator.AddLearner:
 		if region.GetStorePeer(st.ToStore) != nil {
 			// The newly added peer is pending.
 			return
 		}
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			ChangePeer: &pdpb.ChangePeer{
 				ChangeType: eraftpb.ConfChangeType_AddLearnerNode,
 				Peer: &metapb.Peer{
-					Id:        st.PeerID,
-					StoreId:   st.ToStore,
-					IsLearner: true,
+					Id:      st.PeerID,
+					StoreId: st.ToStore,
+					Role:    metapb.PeerRole_Learner,
 				},
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
 	case operator.AddLightLearner:
 		if region.GetStorePeer(st.ToStore) != nil {
 			// The newly added peer is pending.
 			return
 		}
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			ChangePeer: &pdpb.ChangePeer{
 				ChangeType: eraftpb.ConfChangeType_AddLearnerNode,
 				Peer: &metapb.Peer{
-					Id:        st.PeerID,
-					StoreId:   st.ToStore,
-					IsLearner: true,
+					Id:      st.PeerID,
+					StoreId: st.ToStore,
+					Role:    metapb.PeerRole_Learner,
 				},
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
 	case operator.PromoteLearner:
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			ChangePeer: &pdpb.ChangePeer{
 				// reuse AddNode type
 				ChangeType: eraftpb.ConfChangeType_AddNode,
 				Peer: &metapb.Peer{
 					Id:      st.PeerID,
 					StoreId: st.ToStore,
+					Role:    metapb.PeerRole_Voter,
 				},
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
+	case operator.DemoteFollower:
+		cmd = &pdpb.RegionHeartbeatResponse{
+			ChangePeer: &pdpb.ChangePeer{
+				// reuse AddLearnerNode type
+				ChangeType: eraftpb.ConfChangeType_AddLearnerNode,
+				Peer: &metapb.Peer{
+					Id:      st.PeerID,
+					StoreId: st.ToStore,
+					Role:    metapb.PeerRole_Learner,
+				},
+			},
+		}
 	case operator.RemovePeer:
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			ChangePeer: &pdpb.ChangePeer{
 				ChangeType: eraftpb.ConfChangeType_RemoveNode,
 				Peer:       region.GetStorePeer(st.FromStore),
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
 	case operator.MergeRegion:
 		if st.IsPassive {
 			return
 		}
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			Merge: &pdpb.Merge{
 				Target: st.ToRegion,
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
 	case operator.SplitRegion:
-		cmd := &pdpb.RegionHeartbeatResponse{
+		cmd = &pdpb.RegionHeartbeatResponse{
 			SplitRegion: &pdpb.SplitRegion{
 				Policy: st.Policy,
 				Keys:   st.SplitKeys,
 			},
 		}
-		oc.hbStreams.SendMsg(region, cmd)
+	case operator.ChangePeerV2Enter:
+		cmd = &pdpb.RegionHeartbeatResponse{
+			ChangePeerV2: st.GetRequest(),
+		}
+	case operator.ChangePeerV2Leave:
+		cmd = &pdpb.RegionHeartbeatResponse{
+			ChangePeerV2: &pdpb.ChangePeerV2{},
+		}
 	default:
-		log.Error("unknown operator step", zap.Reflect("step", step))
+		log.Error("unknown operator step", zap.Reflect("step", step), errs.ZapError(errs.ErrUnknownOperatorStep))
+		return
 	}
+	oc.hbStreams.SendMsg(region, cmd)
 }
 
 func (oc *OperatorController) pushHistory(op *operator.Operator) {
@@ -849,7 +874,7 @@ func (o *OperatorWithStatus) MarshalJSON() ([]byte, error) {
 
 // OperatorRecords remains the operator and its status for a while.
 type OperatorRecords struct {
-	ttl *cache.TTL
+	ttl *cache.TTLUint64
 }
 
 const operatorStatusRemainTime = 10 * time.Minute
@@ -857,7 +882,7 @@ const operatorStatusRemainTime = 10 * time.Minute
 // NewOperatorRecords returns a OperatorRecords.
 func NewOperatorRecords(ctx context.Context) *OperatorRecords {
 	return &OperatorRecords{
-		ttl: cache.NewTTL(ctx, time.Minute, operatorStatusRemainTime),
+		ttl: cache.NewIDTTL(ctx, time.Minute, operatorStatusRemainTime),
 	}
 }
 
@@ -906,7 +931,7 @@ func (oc *OperatorController) newStoreLimit(storeID uint64, ratePerSec float64, 
 // getOrCreateStoreLimit is used to get or create the limit of a store.
 func (oc *OperatorController) getOrCreateStoreLimit(storeID uint64, limitType storelimit.Type) *storelimit.StoreLimit {
 	if oc.storesLimit[storeID][limitType] == nil {
-		ratePerSec := oc.cluster.GetStoreLimitByType(storeID, limitType) / StoreBalanceBaseTime
+		ratePerSec := oc.cluster.GetOpts().GetStoreLimitByType(storeID, limitType) / StoreBalanceBaseTime
 		oc.newStoreLimit(storeID, ratePerSec, limitType)
 		oc.cluster.AttachAvailableFunc(storeID, limitType, func() bool {
 			oc.RLock()
@@ -917,7 +942,7 @@ func (oc *OperatorController) getOrCreateStoreLimit(storeID uint64, limitType st
 			return oc.storesLimit[storeID][limitType].Available() >= storelimit.RegionInfluence[limitType]
 		})
 	}
-	ratePerSec := oc.cluster.GetStoreLimitByType(storeID, limitType) / StoreBalanceBaseTime
+	ratePerSec := oc.cluster.GetOpts().GetStoreLimitByType(storeID, limitType) / StoreBalanceBaseTime
 	if ratePerSec != oc.storesLimit[storeID][limitType].Rate() {
 		oc.newStoreLimit(storeID, ratePerSec, limitType)
 	}
@@ -929,7 +954,7 @@ func (oc *OperatorController) GetLeaderSchedulePolicy() core.SchedulePolicy {
 	if oc.cluster == nil {
 		return core.ByCount
 	}
-	return oc.cluster.GetLeaderSchedulePolicy()
+	return oc.cluster.GetOpts().GetLeaderSchedulePolicy()
 }
 
 // CollectStoreLimitMetrics collects the metrics about store limit

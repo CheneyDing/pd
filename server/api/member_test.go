@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,8 +22,8 @@ import (
 
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/config"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/config"
 )
 
 var _ = Suite(&testMemberAPISuite{})
@@ -58,14 +58,14 @@ func checkListResponse(c *C, body []byte, cfgs []*config.Config) {
 
 	c.Assert(len(got["members"]), Equals, len(cfgs))
 
-	for _, memb := range got["members"] {
+	for _, member := range got["members"] {
 		for _, cfg := range cfgs {
-			if memb.GetName() != cfg.Name {
+			if member.GetName() != cfg.Name {
 				continue
 			}
 
-			relaxEqualStings(c, memb.ClientUrls, strings.Split(cfg.ClientUrls, ","))
-			relaxEqualStings(c, memb.PeerUrls, strings.Split(cfg.PeerUrls, ","))
+			relaxEqualStings(c, member.ClientUrls, strings.Split(cfg.ClientUrls, ","))
+			relaxEqualStings(c, member.PeerUrls, strings.Split(cfg.PeerUrls, ","))
 		}
 	}
 }

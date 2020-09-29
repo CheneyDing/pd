@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,23 +18,22 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/schedule"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pingcap/pd/v4/server/schedule/storelimit"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core/storelimit"
 	"go.uber.org/zap"
 )
 
 // StoreLimiter adjust the store limit dynamically
 type StoreLimiter struct {
 	m       sync.RWMutex
-	opt     opt.Options
+	opt     *config.PersistOptions
 	scene   map[storelimit.Type]*storelimit.Scene
 	state   *State
 	current LoadState
 }
 
 // NewStoreLimiter builds a store limiter object using the operator controller
-func NewStoreLimiter(opt opt.Options) *StoreLimiter {
+func NewStoreLimiter(opt *config.PersistOptions) *StoreLimiter {
 	defaultScene := map[storelimit.Type]*storelimit.Scene{
 		storelimit.AddPeer:    storelimit.DefaultScene(storelimit.AddPeer),
 		storelimit.RemovePeer: storelimit.DefaultScene(storelimit.RemovePeer),
@@ -88,13 +87,13 @@ func (s *StoreLimiter) calculateRate(limitType storelimit.Type, state LoadState)
 	rate := float64(0)
 	switch state {
 	case LoadStateIdle:
-		rate = float64(s.scene[limitType].Idle) / schedule.StoreBalanceBaseTime
+		rate = float64(s.scene[limitType].Idle)
 	case LoadStateLow:
-		rate = float64(s.scene[limitType].Low) / schedule.StoreBalanceBaseTime
+		rate = float64(s.scene[limitType].Low)
 	case LoadStateNormal:
-		rate = float64(s.scene[limitType].Normal) / schedule.StoreBalanceBaseTime
+		rate = float64(s.scene[limitType].Normal)
 	case LoadStateHigh:
-		rate = float64(s.scene[limitType].High) / schedule.StoreBalanceBaseTime
+		rate = float64(s.scene[limitType].High)
 	}
 	return rate
 }

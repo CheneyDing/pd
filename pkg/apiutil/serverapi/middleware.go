@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,8 +20,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/config"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/config"
 	"github.com/urfave/negroni"
 	"go.uber.org/zap"
 )
@@ -30,7 +31,7 @@ import (
 const (
 	RedirectorHeader    = "PD-Redirector"
 	AllowFollowerHandle = "PD-Allow-follower-handle"
-	FollowerHandle      = "PD-Follwer-handle"
+	FollowerHandle      = "PD-Follower-handle"
 )
 
 const (
@@ -89,8 +90,9 @@ func NewRedirector(s *server.Server) negroni.Handler {
 
 func (h *redirector) ServeHTTP(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
 	allowFollowerHandle := len(r.Header.Get(AllowFollowerHandle)) > 0
-	if !h.s.IsClosed() && (allowFollowerHandle || h.s.GetMember().IsLeader()) {
-		if allowFollowerHandle {
+	isLeader := h.s.GetMember().IsLeader()
+	if !h.s.IsClosed() && (allowFollowerHandle || isLeader) {
+		if !isLeader {
 			w.Header().Add(FollowerHandle, "true")
 		}
 		next(w, r)
@@ -99,7 +101,7 @@ func (h *redirector) ServeHTTP(w http.ResponseWriter, r *http.Request, next http
 
 	// Prevent more than one redirection.
 	if name := r.Header.Get(RedirectorHeader); len(name) != 0 {
-		log.Error("redirect but server is not leader", zap.String("from", name), zap.String("server", h.s.Name()))
+		log.Error("redirect but server is not leader", zap.String("from", name), zap.String("server", h.s.Name()), errs.ZapError(errs.ErrRedirect))
 		http.Error(w, errRedirectToNotLeader, http.StatusInternalServerError)
 		return
 	}
@@ -145,21 +147,21 @@ func (p *customReverseProxies) ServeHTTP(w http.ResponseWriter, r *http.Request)
 
 		resp, err := p.client.Do(r)
 		if err != nil {
-			log.Error("request failed", zap.Error(err))
+			log.Error("request failed", errs.ZapError(errs.ErrSendRequest, err))
 			continue
 		}
 
 		b, err := ioutil.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			log.Error("request failed", zap.Error(err))
+			log.Error("read failed", errs.ZapError(errs.ErrIORead, err))
 			continue
 		}
 
 		copyHeader(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 		if _, err := w.Write(b); err != nil {
-			log.Error("write failed", zap.Error(err))
+			log.Error("write failed", errs.ZapError(errs.ErrWriteHTTPBody, err))
 			continue
 		}
 

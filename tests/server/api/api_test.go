@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,12 +21,12 @@ import (
 	"time"
 
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/v4/pkg/apiutil/serverapi"
-	"github.com/pingcap/pd/v4/pkg/testutil"
-	"github.com/pingcap/pd/v4/pkg/typeutil"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/server/config"
-	"github.com/pingcap/pd/v4/tests"
+	"github.com/tikv/pd/pkg/apiutil/serverapi"
+	"github.com/tikv/pd/pkg/testutil"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/tests"
 	"go.uber.org/goleak"
 )
 
@@ -52,7 +52,7 @@ type serverTestSuite struct{}
 func (s *serverTestSuite) TestReconnect(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cluster, err := tests.NewTestCluster(ctx, 3, func(conf *config.Config) {
+	cluster, err := tests.NewTestCluster(ctx, 3, func(conf *config.Config, serverName string) {
 		conf.TickInterval = typeutil.Duration{Duration: 50 * time.Millisecond}
 		conf.ElectionInterval = typeutil.Duration{Duration: 250 * time.Millisecond}
 	})
@@ -117,7 +117,7 @@ func (s *testRedirectorSuite) SetUpSuite(c *C) {
 	ctx, cancel := context.WithCancel(context.Background())
 	server.EnableZap = true
 	s.cleanup = cancel
-	cluster, err := tests.NewTestCluster(ctx, 3, func(conf *config.Config) {
+	cluster, err := tests.NewTestCluster(ctx, 3, func(conf *config.Config, serverName string) {
 		conf.TickInterval = typeutil.Duration{Duration: 50 * time.Millisecond}
 		conf.ElectionInterval = typeutil.Duration{Duration: 250 * time.Millisecond}
 	})

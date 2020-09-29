@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,10 +20,11 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/errs"
 	"go.uber.org/zap"
 )
 
@@ -40,6 +41,8 @@ type Region struct {
 type Client interface {
 	// GetClusterID gets the cluster ID from PD.
 	GetClusterID(ctx context.Context) uint64
+	// GetAllMembers gets the members Info from PD
+	GetAllMembers(ctx context.Context) ([]*pdpb.Member, error)
 	// GetLeaderAddr returns current leader's address. It returns "" before
 	// syncing leader from server.
 	GetLeaderAddr() string
@@ -77,12 +80,15 @@ type Client interface {
 
 	// UpdateServiceGCSafePoint updates the safepoint for specific service and
 	// returns the minimum safepoint across all services, this value is used to
-	// determine the safepoint for multiple services, it does not tigger a GC
+	// determine the safepoint for multiple services, it does not trigger a GC
 	// job. Use UpdateGCSafePoint to trigger the GC job if needed.
 	UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error)
 	// ScatterRegion scatters the specified region. Should use it for a batch of regions,
 	// and the distribution of these regions will be dispersed.
 	ScatterRegion(ctx context.Context, regionID uint64) error
+	// ScatterRegionWithOption scatters the specified region with the given options, should use it
+	// for a batch of regions.
+	ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...ScatterRegionOption) error
 	// GetOperator gets the status of operator of the specified region.
 	GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error)
 	// Close closes the client.
@@ -100,6 +106,19 @@ type GetStoreOption func(*GetStoreOp)
 // WithExcludeTombstone excludes tombstone stores from the result.
 func WithExcludeTombstone() GetStoreOption {
 	return func(op *GetStoreOp) { op.excludeTombstone = true }
+}
+
+// ScatterRegionOp represents available options when scatter regions
+type ScatterRegionOp struct {
+	group string
+}
+
+// ScatterRegionOption configures ScatterRegionOp
+type ScatterRegionOption func(op *ScatterRegionOp)
+
+// WithGroup specify the group during ScatterRegion
+func WithGroup(group string) ScatterRegionOption {
+	return func(op *ScatterRegionOp) { op.group = group }
 }
 
 type tsoRequest struct {
@@ -179,7 +198,7 @@ func (c *client) tsCancelLoop() {
 		case d := <-c.tsDeadlineCh:
 			select {
 			case <-d.timer:
-				log.Error("tso request is canceled due to timeout")
+				log.Error("tso request is canceled due to timeout", errs.ZapError(errs.ErrClientGetTSOTimeout))
 				d.cancel()
 			case <-d.done:
 			case <-ctx.Done():
@@ -200,6 +219,24 @@ func (c *client) checkStreamTimeout(loopCtx context.Context, cancel context.Canc
 	case <-loopCtx.Done():
 		return
 	}
+}
+
+func (c *client) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
+	start := time.Now()
+	defer func() { cmdDurationGetAllMembers.Observe(time.Since(start).Seconds()) }()
+
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	resp, err := c.leaderClient().GetMembers(ctx, &pdpb.GetMembersRequest{
+		Header: c.requestHeader(),
+	})
+	cancel()
+	if err != nil {
+		cmdFailDurationGetAllMembers.Observe(time.Since(start).Seconds())
+		c.ScheduleCheckLeader()
+		return nil, errors.WithStack(err)
+	}
+	members := resp.GetMembers()
+	return members, nil
 }
 
 func (c *client) tsLoop() {
@@ -234,7 +271,7 @@ func (c *client) tsLoop() {
 					return
 				default:
 				}
-				log.Error("[pd] create tso stream error", zap.Error(err))
+				log.Error("[pd] create tso stream error", errs.ZapError(errs.ErrClientCreateTSOStream, err))
 				c.ScheduleCheckLeader()
 				cancel()
 				c.revokeTSORequest(errors.WithStack(err))
@@ -281,7 +318,7 @@ func (c *client) tsLoop() {
 				return
 			default:
 			}
-			log.Error("[pd] getTS error", zap.Error(err))
+			log.Error("[pd] getTS error", errs.ZapError(errs.ErrClientGetTSO, err))
 			c.ScheduleCheckLeader()
 			cancel()
 			stream, cancel = nil, nil
@@ -334,8 +371,8 @@ func (c *client) processTSORequests(stream pdpb.PD_TsoClient, requests []*tsoReq
 	// Server returns the highest ts.
 	logical -= int64(resp.GetCount() - 1)
 	if tsLessEqual(physical, logical, c.lastPhysical, c.lastLogical) {
-		panic(errors.Errorf("timestamp fallback, newly acquired ts (%d,%d) is less or equal to last one (%d, %d)",
-			physical, logical, c.lastLogical, c.lastLogical))
+		panic(errors.Errorf("timestamp fallback, newly acquired ts (%d, %d) is less or equal to last one (%d, %d)",
+			physical, logical, c.lastPhysical, c.lastLogical))
 	}
 	c.lastPhysical = physical
 	c.lastLogical = logical + int64(len(requests)) - 1
@@ -378,7 +415,7 @@ func (c *client) Close() {
 	defer c.connMu.Unlock()
 	for _, cc := range c.connMu.clientConns {
 		if err := cc.Close(); err != nil {
-			log.Error("[pd] failed close grpc clientConn", zap.Error(err))
+			log.Error("[pd] failed to close gRPC clientConn", errs.ZapError(errs.ErrCloseGRPCConn, err))
 		}
 	}
 }
@@ -672,7 +709,7 @@ func (c *client) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint6
 
 // UpdateServiceGCSafePoint updates the safepoint for specific service and
 // returns the minimum safepoint across all services, this value is used to
-// determine the safepoint for multiple services, it does not tigger a GC
+// determine the safepoint for multiple services, it does not trigger a GC
 // job. Use UpdateGCSafePoint to trigger the GC job if needed.
 func (c *client) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil {
@@ -705,22 +742,19 @@ func (c *client) ScatterRegion(ctx context.Context, regionID uint64) error {
 		span = opentracing.StartSpan("pdclient.ScatterRegion", opentracing.ChildOf(span.Context()))
 		defer span.Finish()
 	}
-	start := time.Now()
-	defer func() { cmdDurationScatterRegion.Observe(time.Since(start).Seconds()) }()
+	return c.scatterRegionsWithGroup(ctx, regionID, "")
+}
 
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	resp, err := c.leaderClient().ScatterRegion(ctx, &pdpb.ScatterRegionRequest{
-		Header:   c.requestHeader(),
-		RegionId: regionID,
-	})
-	cancel()
-	if err != nil {
-		return err
+func (c *client) ScatterRegionWithOption(ctx context.Context, regionID uint64, opts ...ScatterRegionOption) error {
+	if span := opentracing.SpanFromContext(ctx); span != nil {
+		span = opentracing.StartSpan("pdclient.ScatterRegionWithOption", opentracing.ChildOf(span.Context()))
+		defer span.Finish()
 	}
-	if resp.Header.GetError() != nil {
-		return errors.Errorf("scatter region %d failed: %s", regionID, resp.Header.GetError().String())
+	options := &ScatterRegionOp{}
+	for _, opt := range opts {
+		opt(options)
 	}
-	return nil
+	return c.scatterRegionsWithGroup(ctx, regionID, options.group)
 }
 
 func (c *client) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
@@ -743,6 +777,26 @@ func (c *client) requestHeader() *pdpb.RequestHeader {
 	return &pdpb.RequestHeader{
 		ClusterId: c.clusterID,
 	}
+}
+
+func (c *client) scatterRegionsWithGroup(ctx context.Context, regionID uint64, group string) error {
+	start := time.Now()
+	defer func() { cmdDurationScatterRegion.Observe(time.Since(start).Seconds()) }()
+
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	resp, err := c.leaderClient().ScatterRegion(ctx, &pdpb.ScatterRegionRequest{
+		Header:   c.requestHeader(),
+		RegionId: regionID,
+		Group:    group,
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
+	if resp.Header.GetError() != nil {
+		return errors.Errorf("scatter region %d failed: %s", regionID, resp.Header.GetError().String())
+	}
+	return nil
 }
 
 func addrsToUrls(addrs []string) []string {

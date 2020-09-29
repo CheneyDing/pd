@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,12 +17,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/chzyer/readline"
 	"github.com/mattn/go-shellwords"
-	"github.com/pingcap/pd/v4/server"
-	"github.com/pingcap/pd/v4/tools/pd-ctl/pdctl/command"
 	"github.com/spf13/cobra"
+	"github.com/tikv/pd/server"
+	"github.com/tikv/pd/tools/pd-ctl/pdctl/command"
 )
 
 // CommandFlags are flags that used in all Commands
@@ -35,11 +36,14 @@ type CommandFlags struct {
 }
 
 var (
-	commandFlags = CommandFlags{}
+	commandFlags = CommandFlags{
+		URL: "http://127.0.0.1:2379",
+	}
 
-	detach   bool
-	interact bool
-	version  bool
+	detach            bool
+	interact          bool
+	version           bool
+	readlineCompleter *readline.PrefixCompleter
 )
 
 func init() {
@@ -62,10 +66,10 @@ func getBasicCmd() *cobra.Command {
 		Short: "Placement Driver control",
 	}
 
-	rootCmd.PersistentFlags().StringVarP(&commandFlags.URL, "pd", "u", "http://127.0.0.1:2379", "address of pd")
-	rootCmd.PersistentFlags().StringVar(&commandFlags.CAPath, "cacert", "", "path of file that contains list of trusted SSL CAs")
-	rootCmd.PersistentFlags().StringVar(&commandFlags.CertPath, "cert", "", "path of file that contains X509 certificate in PEM format")
-	rootCmd.PersistentFlags().StringVar(&commandFlags.KeyPath, "key", "", "path of file that contains X509 key in PEM format")
+	rootCmd.PersistentFlags().StringVarP(&commandFlags.URL, "pd", "u", commandFlags.URL, "address of pd")
+	rootCmd.PersistentFlags().StringVar(&commandFlags.CAPath, "cacert", commandFlags.CAPath, "path of file that contains list of trusted SSL CAs")
+	rootCmd.PersistentFlags().StringVar(&commandFlags.CertPath, "cert", commandFlags.CertPath, "path of file that contains X509 certificate in PEM format")
+	rootCmd.PersistentFlags().StringVar(&commandFlags.KeyPath, "key", commandFlags.KeyPath, "path of file that contains X509 key in PEM format")
 	rootCmd.PersistentFlags().BoolVarP(&commandFlags.Help, "help", "h", false, "help message")
 
 	rootCmd.AddCommand(
@@ -85,6 +89,7 @@ func getBasicCmd() *cobra.Command {
 		command.NewHealthCommand(),
 		command.NewLogCommand(),
 		command.NewPluginCommand(),
+		command.NewServiceGCSafepointCommand(),
 		command.NewCompletionCommand(),
 	)
 
@@ -117,6 +122,7 @@ func getMainCmd(args []string) *cobra.Command {
 	rootCmd.ParseFlags(args)
 	rootCmd.SetOutput(os.Stdout)
 
+	readlineCompleter = readline.NewPrefixCompleter(genCompleter(rootCmd)...)
 	return rootCmd
 }
 
@@ -156,6 +162,7 @@ func loop() {
 	l, err := readline.NewEx(&readline.Config{
 		Prompt:            "\033[31m»\033[0m ",
 		HistoryFile:       "/tmp/readline.tmp",
+		AutoComplete:      readlineCompleter,
 		InterruptPrompt:   "^C",
 		EOFPrompt:         "^D",
 		HistorySearchFold: true,
@@ -183,10 +190,25 @@ func loop() {
 			fmt.Printf("parse command err: %v\n", err)
 			continue
 		}
-		args = append(args, "-u", commandFlags.URL)
-		if commandFlags.CAPath != "" && commandFlags.CertPath != "" && commandFlags.KeyPath != "" {
-			args = append(args, "--cacert", commandFlags.CAPath, "--cert", commandFlags.CertPath, "--key", commandFlags.KeyPath)
-		}
 		Start(args)
 	}
+}
+
+func genCompleter(cmd *cobra.Command) []readline.PrefixCompleterInterface {
+	pc := []readline.PrefixCompleterInterface{}
+
+	for _, v := range cmd.Commands() {
+		if v.HasFlags() {
+			flagsPc := []readline.PrefixCompleterInterface{}
+			flagUsages := strings.Split(strings.Trim(v.Flags().FlagUsages(), " "), "\n")
+			for i := 0; i < len(flagUsages)-1; i++ {
+				flagsPc = append(flagsPc, readline.PcItem(strings.Split(strings.Trim(flagUsages[i], " "), " ")[0]))
+			}
+			flagsPc = append(flagsPc, genCompleter(v)...)
+			pc = append(pc, readline.PcItem(strings.Split(v.Use, " ")[0], flagsPc...))
+		} else {
+			pc = append(pc, readline.PcItem(strings.Split(v.Use, " ")[0], genCompleter(v)...))
+		}
+	}
+	return pc
 }

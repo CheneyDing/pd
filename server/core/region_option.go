@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,9 +33,9 @@ func WithDownPeers(downPeers []*pdpb.PeerStats) RegionCreateOption {
 }
 
 // WithPendingPeers sets the pending peers for the region.
-func WithPendingPeers(pengdingPeers []*metapb.Peer) RegionCreateOption {
+func WithPendingPeers(pendingPeers []*metapb.Peer) RegionCreateOption {
 	return func(region *RegionInfo) {
-		region.pendingPeers = pengdingPeers
+		region.pendingPeers = pendingPeers
 	}
 }
 
@@ -46,7 +46,7 @@ func WithLearners(learners []*metapb.Peer) RegionCreateOption {
 		for i := range peers {
 			for _, l := range learners {
 				if peers[i].GetId() == l.GetId() {
-					peers[i] = &metapb.Peer{Id: l.GetId(), StoreId: l.GetStoreId(), IsLearner: true}
+					peers[i] = &metapb.Peer{Id: l.GetId(), StoreId: l.GetStoreId(), Role: metapb.PeerRole_Learner}
 					break
 				}
 			}
@@ -196,7 +196,7 @@ func SetReportInterval(v uint64) RegionCreateOption {
 	}
 }
 
-// SetRegionConfVer sets the config version for the reigon.
+// SetRegionConfVer sets the config version for the region.
 func SetRegionConfVer(confVer uint64) RegionCreateOption {
 	return func(region *RegionInfo) {
 		if region.meta.RegionEpoch == nil {
@@ -207,7 +207,7 @@ func SetRegionConfVer(confVer uint64) RegionCreateOption {
 	}
 }
 
-// SetRegionVersion sets the version for the reigon.
+// SetRegionVersion sets the version for the region.
 func SetRegionVersion(version uint64) RegionCreateOption {
 	return func(region *RegionInfo) {
 		if region.meta.RegionEpoch == nil {
@@ -236,7 +236,7 @@ func SetReplicationStatus(status *replication_modepb.RegionReplicationStatus) Re
 func WithAddPeer(peer *metapb.Peer) RegionCreateOption {
 	return func(region *RegionInfo) {
 		region.meta.Peers = append(region.meta.Peers, peer)
-		if peer.IsLearner {
+		if IsLearner(peer) {
 			region.learners = append(region.learners, peer)
 		} else {
 			region.voters = append(region.voters, peer)
@@ -249,7 +249,7 @@ func WithPromoteLearner(peerID uint64) RegionCreateOption {
 	return func(region *RegionInfo) {
 		for _, p := range region.GetPeers() {
 			if p.GetId() == peerID {
-				p.IsLearner = false
+				p.Role = metapb.PeerRole_Voter
 			}
 		}
 	}

@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,7 +13,11 @@
 
 package tsoutil
 
-import "time"
+import (
+	"time"
+
+	"github.com/pingcap/kvproto/pkg/pdpb"
+)
 
 const (
 	physicalShiftBits = 18
@@ -26,4 +30,24 @@ func ParseTS(ts uint64) (time.Time, uint64) {
 	physical := ts >> physicalShiftBits
 	physicalTime := time.Unix(int64(physical/1000), int64(physical)%1000*time.Millisecond.Nanoseconds())
 	return physicalTime, logical
+}
+
+// ParseTimestamp parses `pdpb.Timestamp` to `time.Time`
+func ParseTimestamp(ts pdpb.Timestamp) (time.Time, uint64) {
+	logical := uint64(ts.GetLogical())
+	physicalTime := time.Unix(ts.GetPhysical()/1000, ts.GetPhysical()%1000*time.Millisecond.Nanoseconds())
+	return physicalTime, logical
+}
+
+// GenerateTS generate an `uint64` TS by passing a `pdpb.Timestamp`.
+func GenerateTS(ts *pdpb.Timestamp) uint64 {
+	return uint64(ts.GetPhysical())<<18 | uint64(ts.GetLogical())&0x3FFFF
+}
+
+// GenerateTimestamp generate a `pdpb.Timestamp` by passing `time.Time` and `uint64`
+func GenerateTimestamp(physical time.Time, logical uint64) *pdpb.Timestamp {
+	return &pdpb.Timestamp{
+		Physical: physical.UnixNano() / int64(time.Millisecond),
+		Logical:  int64(logical),
+	}
 }

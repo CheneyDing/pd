@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -265,7 +265,7 @@ func addLearnerCommandFunc(cmd *cobra.Command, args []string) {
 func NewMergeRegionCommand() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "merge-region <source_region_id> <target_region_id>",
-		Short: "merge source region into target reigon",
+		Short: "merge source region into target region",
 		Run:   mergeRegionCommandFunc,
 	}
 	return c

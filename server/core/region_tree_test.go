@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -139,6 +139,17 @@ func (s *testRegionSuite) TestRegionSubTree(c *C) {
 	tree.remove(s.newRegionWithStat("f", "g", 1, 2))
 	c.Assert(tree.totalSize, Equals, int64(5))
 	c.Assert(tree.totalKeys, Equals, int64(6))
+}
+
+func (s *testRegionSuite) TestRegionSubTreeMerge(c *C) {
+	tree := newRegionSubTree()
+	tree.update(s.newRegionWithStat("a", "b", 1, 2))
+	tree.update(s.newRegionWithStat("b", "c", 3, 4))
+	c.Assert(tree.totalSize, Equals, int64(4))
+	c.Assert(tree.totalKeys, Equals, int64(6))
+	tree.update(s.newRegionWithStat("a", "c", 5, 5))
+	c.Assert(tree.totalSize, Equals, int64(5))
+	c.Assert(tree.totalKeys, Equals, int64(5))
 }
 
 func (s *testRegionSuite) TestRegionTree(c *C) {

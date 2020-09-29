@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ import (
 	"strconv"
 
 	"github.com/docker/go-units"
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 // ByteSize is a retype uint64 for TOML and JSON.
@@ -28,7 +28,7 @@ func (b ByteSize) MarshalJSON() ([]byte, error) {
 	return []byte(`"` + units.BytesSize(float64(b)) + `"`), nil
 }
 
-// UnmarshalJSON parses a JSON string into the bytesize.
+// UnmarshalJSON parses a JSON string into the byte size.
 func (b *ByteSize) UnmarshalJSON(text []byte) error {
 	s, err := strconv.Unquote(string(text))
 	if err != nil {
@@ -42,7 +42,7 @@ func (b *ByteSize) UnmarshalJSON(text []byte) error {
 	return nil
 }
 
-// UnmarshalText parses a Toml string into the bytesize.
+// UnmarshalText parses a Toml string into the byte size.
 func (b *ByteSize) UnmarshalText(text []byte) error {
 	v, err := units.RAMInBytes(string(text))
 	if err != nil {

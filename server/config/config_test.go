@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,11 +24,8 @@ import (
 
 	"github.com/BurntSushi/toml"
 	. "github.com/pingcap/check"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/kv"
-
-	// Register schedulers.
-	_ "github.com/pingcap/pd/v4/server/schedulers"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/kv"
 )
 
 func Test(t *testing.T) {
@@ -38,6 +35,19 @@ func Test(t *testing.T) {
 var _ = Suite(&testConfigSuite{})
 
 type testConfigSuite struct{}
+
+func (s *testConfigSuite) SetUpSuite(c *C) {
+	for _, d := range DefaultSchedulers {
+		RegisterScheduler(d.Type)
+	}
+	RegisterScheduler("random-merge")
+	RegisterScheduler("adjacent-region")
+}
+
+func (s *testConfigSuite) TestSecurity(c *C) {
+	cfg := NewConfig()
+	c.Assert(cfg.Security.RedactInfoLog, Equals, false)
+}
 
 func (s *testConfigSuite) TestTLS(c *C) {
 	cfg := NewConfig()

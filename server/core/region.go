@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -24,10 +24,16 @@ import (
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/kvproto/pkg/replication_modepb"
 )
+
+// errRegionIsStale is error info for region is stale.
+var errRegionIsStale = func(region *metapb.Region, origin *metapb.Region) error {
+	return errors.Errorf("region is stale: region %v origin %v", region, origin)
+}
 
 // RegionInfo records detail region info.
 // Read-Only once created.
@@ -83,7 +89,7 @@ func classifyVoterAndLearner(region *RegionInfo) {
 	learners := make([]*metapb.Peer, 0, 1)
 	voters := make([]*metapb.Peer, 0, len(region.meta.Peers))
 	for _, p := range region.meta.Peers {
-		if p.IsLearner {
+		if IsLearner(p) {
 			learners = append(learners, p)
 		} else {
 			voters = append(voters, p)
@@ -199,7 +205,7 @@ func (r *RegionInfo) GetDownPeer(peerID uint64) *metapb.Peer {
 // GetDownVoter returns the down voter with specified peer id.
 func (r *RegionInfo) GetDownVoter(peerID uint64) *metapb.Peer {
 	for _, down := range r.downPeers {
-		if down.GetPeer().GetId() == peerID && !down.GetPeer().IsLearner {
+		if down.GetPeer().GetId() == peerID && !IsLearner(down.GetPeer()) {
 			return down.GetPeer()
 		}
 	}
@@ -209,7 +215,7 @@ func (r *RegionInfo) GetDownVoter(peerID uint64) *metapb.Peer {
 // GetDownLearner returns the down learner with soecified peer id.
 func (r *RegionInfo) GetDownLearner(peerID uint64) *metapb.Peer {
 	for _, down := range r.downPeers {
-		if down.GetPeer().GetId() == peerID && down.GetPeer().IsLearner {
+		if down.GetPeer().GetId() == peerID && IsLearner(down.GetPeer()) {
 			return down.GetPeer()
 		}
 	}
@@ -229,7 +235,7 @@ func (r *RegionInfo) GetPendingPeer(peerID uint64) *metapb.Peer {
 // GetPendingVoter returns the pending voter with specified peer id.
 func (r *RegionInfo) GetPendingVoter(peerID uint64) *metapb.Peer {
 	for _, peer := range r.pendingPeers {
-		if peer.GetId() == peerID && !peer.IsLearner {
+		if peer.GetId() == peerID && !IsLearner(peer) {
 			return peer
 		}
 	}
@@ -239,7 +245,7 @@ func (r *RegionInfo) GetPendingVoter(peerID uint64) *metapb.Peer {
 // GetPendingLearner returns the pending learner peer with specified peer id.
 func (r *RegionInfo) GetPendingLearner(peerID uint64) *metapb.Peer {
 	for _, peer := range r.pendingPeers {
-		if peer.GetId() == peerID && peer.IsLearner {
+		if peer.GetId() == peerID && IsLearner(peer) {
 			return peer
 		}
 	}
@@ -520,15 +526,13 @@ func (rst *regionSubTree) scanRanges() []*RegionInfo {
 }
 
 func (rst *regionSubTree) update(region *RegionInfo) {
-	if r := rst.find(region); r != nil {
-		rst.totalSize += region.approximateSize - r.region.approximateSize
-		rst.totalKeys += region.approximateKeys - r.region.approximateKeys
-		r.region = region
-		return
-	}
+	overlaps := rst.regionTree.update(region)
 	rst.totalSize += region.approximateSize
 	rst.totalKeys += region.approximateKeys
-	rst.regionTree.update(region)
+	for _, r := range overlaps {
+		rst.totalSize -= r.approximateSize
+		rst.totalKeys -= r.approximateKeys
+	}
 }
 
 func (rst *regionSubTree) remove(region *RegionInfo) {
@@ -937,12 +941,18 @@ func (r *RegionsInfo) RandLearnerRegions(storeID uint64, ranges []KeyRange, n in
 
 // GetLeader return leader RegionInfo by storeID and regionID(now only used in test)
 func (r *RegionsInfo) GetLeader(storeID uint64, region *RegionInfo) *RegionInfo {
-	return r.leaders[storeID].find(region).region
+	if leaders, ok := r.leaders[storeID]; ok {
+		return leaders.find(region).region
+	}
+	return nil
 }
 
 // GetFollower return follower RegionInfo by storeID and regionID(now only used in test)
 func (r *RegionsInfo) GetFollower(storeID uint64, region *RegionInfo) *RegionInfo {
-	return r.followers[storeID].find(region).region
+	if followers, ok := r.followers[storeID]; ok {
+		return followers.find(region).region
+	}
+	return nil
 }
 
 // ScanRange scans regions intersecting [start key, end key), returns at most

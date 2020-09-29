@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,13 +15,12 @@ package schedulers
 
 import (
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule"
-	"github.com/pingcap/pd/v4/server/schedule/filter"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pkg/errors"
-	"go.uber.org/zap"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule"
+	"github.com/tikv/pd/server/schedule/filter"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
 )
 
 const (
@@ -36,11 +35,11 @@ func init() {
 		return func(v interface{}) error {
 			conf, ok := v.(*shuffleLeaderSchedulerConfig)
 			if !ok {
-				return ErrScheduleConfigNotExist
+				return errs.ErrScheduleConfigNotExist.FastGenByArgs()
 			}
 			ranges, err := getKeyRanges(args)
 			if err != nil {
-				return errors.WithStack(err)
+				return err
 			}
 			conf.Ranges = ranges
 			conf.Name = ShuffleLeaderName
@@ -96,7 +95,7 @@ func (s *shuffleLeaderScheduler) EncodeConfig() ([]byte, error) {
 }
 
 func (s *shuffleLeaderScheduler) IsScheduleAllowed(cluster opt.Cluster) bool {
-	return s.OpController.OperatorCount(operator.OpLeader) < cluster.GetLeaderScheduleLimit()
+	return s.OpController.OperatorCount(operator.OpLeader) < cluster.GetOpts().GetLeaderScheduleLimit()
 }
 
 func (s *shuffleLeaderScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
@@ -105,7 +104,7 @@ func (s *shuffleLeaderScheduler) Schedule(cluster opt.Cluster) []*operator.Opera
 	// 2. transfer a leader to the store.
 	schedulerCounter.WithLabelValues(s.GetName(), "schedule").Inc()
 	targetStore := filter.NewCandidates(cluster.GetStores()).
-		FilterTarget(cluster, s.filters...).
+		FilterTarget(cluster.GetOpts(), s.filters...).
 		RandomPick()
 	if targetStore == nil {
 		schedulerCounter.WithLabelValues(s.GetName(), "no-target-store").Inc()
@@ -118,7 +117,7 @@ func (s *shuffleLeaderScheduler) Schedule(cluster opt.Cluster) []*operator.Opera
 	}
 	op, err := operator.CreateTransferLeaderOperator(ShuffleLeaderType, cluster, region, region.GetLeader().GetId(), targetStore.GetID(), operator.OpAdmin)
 	if err != nil {
-		log.Debug("fail to create shuffle leader operator", zap.Error(err))
+		log.Debug("fail to create shuffle leader operator", errs.ZapError(err))
 		return nil
 	}
 	op.SetPriorityLevel(core.HighPriority)

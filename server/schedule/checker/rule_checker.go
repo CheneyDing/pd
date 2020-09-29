@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,15 +14,16 @@
 package checker
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/filter"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pingcap/pd/v4/server/schedule/placement"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule/filter"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
+	"github.com/tikv/pd/server/schedule/placement"
 	"go.uber.org/zap"
 )
 
@@ -57,7 +58,7 @@ func (c *RuleChecker) Check(region *core.RegionInfo) *operator.Operator {
 	for _, rf := range fit.RuleFits {
 		op, err := c.fixRulePeer(region, fit, rf)
 		if err != nil {
-			log.Debug("fail to fix rule peer", zap.Error(err), zap.String("rule-group", rf.Rule.GroupID), zap.String("rule-id", rf.Rule.ID))
+			log.Debug("fail to fix rule peer", zap.String("rule-group", rf.Rule.GroupID), zap.String("rule-id", rf.Rule.ID), errs.ZapError(err))
 			break
 		}
 		if op != nil {
@@ -66,7 +67,7 @@ func (c *RuleChecker) Check(region *core.RegionInfo) *operator.Operator {
 	}
 	op, err := c.fixOrphanPeers(region, fit)
 	if err != nil {
-		log.Debug("fail to fix orphan peer", zap.Error(err))
+		log.Debug("fail to fix orphan peer", errs.ZapError(err))
 		return nil
 	}
 	return op
@@ -117,7 +118,7 @@ func (c *RuleChecker) addRulePeer(region *core.RegionInfo, rf *placement.RuleFit
 		checkerCounter.WithLabelValues("rule_checker", "no-store-add").Inc()
 		return nil, errors.New("no store to add peer")
 	}
-	peer := &metapb.Peer{StoreId: store, IsLearner: rf.Rule.Role == placement.Learner}
+	peer := &metapb.Peer{StoreId: store, Role: rf.Rule.Role.MetaPeerRole()}
 	return operator.CreateAddPeerOperator("add-rule-peer", c.cluster, region, peer, operator.OpReplica)
 }
 
@@ -128,12 +129,12 @@ func (c *RuleChecker) replaceRulePeer(region *core.RegionInfo, rf *placement.Rul
 		checkerCounter.WithLabelValues("rule_checker", "no-store-replace").Inc()
 		return nil, errors.New("no store to replace peer")
 	}
-	newPeer := &metapb.Peer{StoreId: store, IsLearner: rf.Rule.Role == placement.Learner}
+	newPeer := &metapb.Peer{StoreId: store, Role: rf.Rule.Role.MetaPeerRole()}
 	return operator.CreateMovePeerOperator("replace-rule-"+status+"-peer", c.cluster, region, operator.OpReplica, peer.StoreId, newPeer)
 }
 
 func (c *RuleChecker) fixLooseMatchPeer(region *core.RegionInfo, fit *placement.RegionFit, rf *placement.RuleFit, peer *metapb.Peer) (*operator.Operator, error) {
-	if peer.IsLearner && rf.Rule.Role != placement.Learner {
+	if core.IsLearner(peer) && rf.Rule.Role != placement.Learner {
 		checkerCounter.WithLabelValues("rule_checker", "fix-peer-role").Inc()
 		return operator.CreatePromoteLearnerOperator("fix-peer-role", c.cluster, region, peer)
 	}
@@ -151,7 +152,7 @@ func (c *RuleChecker) fixLooseMatchPeer(region *core.RegionInfo, fit *placement.
 }
 
 func (c *RuleChecker) allowLeader(fit *placement.RegionFit, peer *metapb.Peer) bool {
-	if peer.GetIsLearner() {
+	if core.IsLearner(peer) {
 		return false
 	}
 	s := c.cluster.GetStore(peer.GetStoreId())
@@ -159,7 +160,7 @@ func (c *RuleChecker) allowLeader(fit *placement.RegionFit, peer *metapb.Peer) b
 		return false
 	}
 	stateFilter := filter.StoreStateFilter{ActionScope: "rule-checker", TransferLeader: true}
-	if !stateFilter.Target(c.cluster, s) {
+	if !stateFilter.Target(c.cluster.GetOpts(), s) {
 		return false
 	}
 	for _, rf := range fit.RuleFits {
@@ -188,7 +189,7 @@ func (c *RuleChecker) fixBetterLocation(region *core.RegionInfo, rf *placement.R
 		return nil, nil
 	}
 	checkerCounter.WithLabelValues("rule_checker", "move-to-better-location").Inc()
-	newPeer := &metapb.Peer{StoreId: newStore, IsLearner: rf.Rule.Role == placement.Learner}
+	newPeer := &metapb.Peer{StoreId: newStore, Role: rf.Rule.Role.MetaPeerRole()}
 	return operator.CreateMovePeerOperator("move-to-better-location", c.cluster, region, operator.OpReplica, oldStore, newPeer)
 }
 
@@ -219,10 +220,10 @@ func (c *RuleChecker) isDownPeer(region *core.RegionInfo, peer *metapb.Peer) boo
 			log.Warn("lost the store, maybe you are recovering the PD cluster", zap.Uint64("store-id", storeID))
 			return false
 		}
-		if store.DownTime() < c.cluster.GetMaxStoreDownTime() {
+		if store.DownTime() < c.cluster.GetOpts().GetMaxStoreDownTime() {
 			continue
 		}
-		if stats.GetDownSeconds() < uint64(c.cluster.GetMaxStoreDownTime().Seconds()) {
+		if stats.GetDownSeconds() < uint64(c.cluster.GetOpts().GetMaxStoreDownTime().Seconds()) {
 			continue
 		}
 		return true
@@ -243,6 +244,7 @@ func (c *RuleChecker) strategy(region *core.RegionInfo, rule *placement.Rule) *R
 	return &ReplicaStrategy{
 		checkerName:    c.name,
 		cluster:        c.cluster,
+		isolationLevel: rule.IsolationLevel,
 		locationLabels: rule.LocationLabels,
 		region:         region,
 		extraFilters:   []filter.Filter{filter.NewLabelConstaintFilter(c.name, rule.LabelConstraints)},

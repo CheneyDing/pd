@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,19 +16,19 @@ package cluster
 import (
 	. "github.com/pingcap/check"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/pd/v4/pkg/mock/mockoption"
-	"github.com/pingcap/pd/v4/server/schedule/storelimit"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core/storelimit"
 )
 
 var _ = Suite(&testStoreLimiterSuite{})
 
 type testStoreLimiterSuite struct {
-	opt *mockoption.ScheduleOptions
+	opt *config.PersistOptions
 }
 
 func (s *testStoreLimiterSuite) SetUpSuite(c *C) {
 	// Create a server for testing
-	s.opt = mockoption.NewScheduleOptions()
+	s.opt = config.NewTestOptions()
 }
 
 func (s *testStoreLimiterSuite) TestCollect(c *C) {

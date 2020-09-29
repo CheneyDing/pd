@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 
 package opt
 
-import "github.com/pingcap/pd/v4/server/core"
+import "github.com/tikv/pd/server/core"
 
 // IsRegionHealthy checks if a region is healthy for scheduling. It requires the
 // region does not have any down or pending peers. And when placement rules
@@ -25,7 +25,7 @@ func IsRegionHealthy(cluster Cluster, region *core.RegionInfo) bool {
 // IsHealthyAllowPending checks if a region is healthy for scheduling.
 // Differs from IsRegionHealthy, it allows the region to have pending peers.
 func IsHealthyAllowPending(cluster Cluster, region *core.RegionInfo) bool {
-	if !cluster.IsPlacementRulesEnabled() && len(region.GetLearners()) > 0 {
+	if !cluster.GetOpts().IsPlacementRulesEnabled() && len(region.GetLearners()) > 0 {
 		return false
 	}
 	return len(region.GetDownPeers()) == 0
@@ -49,10 +49,10 @@ func HealthAllowPending(cluster Cluster) func(*core.RegionInfo) bool {
 // rules is enabled, its peers should fit corresponding rules. When placement
 // rules is disabled, it should have enough replicas and no any learner peer.
 func IsRegionReplicated(cluster Cluster, region *core.RegionInfo) bool {
-	if cluster.IsPlacementRulesEnabled() {
+	if cluster.GetOpts().IsPlacementRulesEnabled() {
 		return cluster.FitRegion(region).IsSatisfied()
 	}
-	return len(region.GetLearners()) == 0 && len(region.GetPeers()) == cluster.GetMaxReplicas()
+	return len(region.GetLearners()) == 0 && len(region.GetPeers()) == cluster.GetOpts().GetMaxReplicas()
 }
 
 // ReplicatedRegion returns a function that checks if a region is fully replicated.

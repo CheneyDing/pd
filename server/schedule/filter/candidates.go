@@ -1,4 +1,4 @@
-// Copyright 2020 PingCAP, Inc.
+// Copyright 2020 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,11 +17,11 @@ import (
 	"math/rand"
 	"sort"
 
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
 )
 
-// StoreCandidates wraps store list and proivde utilities to select source or
+// StoreCandidates wraps store list and provide utilities to select source or
 // target store to schedule.
 type StoreCandidates struct {
 	Stores []*core.StoreInfo
@@ -33,13 +33,13 @@ func NewCandidates(stores []*core.StoreInfo) *StoreCandidates {
 }
 
 // FilterSource keeps stores that can pass all source filters.
-func (c *StoreCandidates) FilterSource(opt opt.Options, filters ...Filter) *StoreCandidates {
+func (c *StoreCandidates) FilterSource(opt *config.PersistOptions, filters ...Filter) *StoreCandidates {
 	c.Stores = SelectSourceStores(c.Stores, filters, opt)
 	return c
 }
 
 // FilterTarget keeps stores that can pass all target filters.
-func (c *StoreCandidates) FilterTarget(opt opt.Options, filters ...Filter) *StoreCandidates {
+func (c *StoreCandidates) FilterTarget(opt *config.PersistOptions, filters ...Filter) *StoreCandidates {
 	c.Stores = SelectTargetStores(c.Stores, filters, opt)
 	return c
 }

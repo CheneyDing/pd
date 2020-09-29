@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@ import (
 	"net/http"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule"
-	"github.com/pingcap/pd/v4/server/schedule/filter"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
-	"github.com/pkg/errors"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule"
+	"github.com/tikv/pd/server/schedule/filter"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
 )
 
 const (
@@ -37,11 +37,11 @@ func init() {
 		return func(v interface{}) error {
 			conf, ok := v.(*shuffleRegionSchedulerConfig)
 			if !ok {
-				return ErrScheduleConfigNotExist
+				return errs.ErrScheduleConfigNotExist.FastGenByArgs()
 			}
 			ranges, err := getKeyRanges(args)
 			if err != nil {
-				return errors.WithStack(err)
+				return err
 			}
 			conf.Ranges = ranges
 			conf.Roles = allRoles
@@ -95,7 +95,7 @@ func (s *shuffleRegionScheduler) EncodeConfig() ([]byte, error) {
 }
 
 func (s *shuffleRegionScheduler) IsScheduleAllowed(cluster opt.Cluster) bool {
-	return s.OpController.OperatorCount(operator.OpRegion) < cluster.GetRegionScheduleLimit()
+	return s.OpController.OperatorCount(operator.OpRegion) < cluster.GetOpts().GetRegionScheduleLimit()
 }
 
 func (s *shuffleRegionScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
@@ -124,7 +124,7 @@ func (s *shuffleRegionScheduler) Schedule(cluster opt.Cluster) []*operator.Opera
 
 func (s *shuffleRegionScheduler) scheduleRemovePeer(cluster opt.Cluster) (*core.RegionInfo, *metapb.Peer) {
 	candidates := filter.NewCandidates(cluster.GetStores()).
-		FilterSource(cluster, s.filters...).
+		FilterSource(cluster.GetOpts(), s.filters...).
 		Shuffle()
 
 	for _, source := range candidates.Stores {
@@ -153,11 +153,11 @@ func (s *shuffleRegionScheduler) scheduleAddPeer(cluster opt.Cluster, region *co
 	excludedFilter := filter.NewExcludedFilter(s.GetName(), nil, region.GetStoreIds())
 
 	target := filter.NewCandidates(cluster.GetStores()).
-		FilterTarget(cluster, s.filters...).
-		FilterTarget(cluster, scoreGuard, excludedFilter).
+		FilterTarget(cluster.GetOpts(), s.filters...).
+		FilterTarget(cluster.GetOpts(), scoreGuard, excludedFilter).
 		RandomPick()
 	if target == nil {
 		return nil
 	}
-	return &metapb.Peer{StoreId: target.GetID(), IsLearner: oldPeer.GetIsLearner()}
+	return &metapb.Peer{StoreId: target.GetID(), Role: oldPeer.GetRole()}
 }

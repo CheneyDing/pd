@@ -1,4 +1,4 @@
-// Copyright 2019 PingCAP, Inc.
+// Copyright 2019 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -50,7 +50,7 @@ func (trk *OpStatusTracker) ReachTime() time.Time {
 	return trk.getTime(trk.current)
 }
 
-// ReachTimeOf returns the time when reached given status. If didn't reatched the given status, return zero.
+// ReachTimeOf returns the time when reached given status. If didn't reached the given status, return zero.
 func (trk *OpStatusTracker) ReachTimeOf(s OpStatus) time.Time {
 	trk.rw.RLock()
 	defer trk.rw.RUnlock()

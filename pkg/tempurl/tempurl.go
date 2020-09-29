@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -54,6 +54,9 @@ func tryAllocTestURL() string {
 	testAddrMutex.Lock()
 	defer testAddrMutex.Unlock()
 	if _, ok := testAddrMap[addr]; ok {
+		return ""
+	}
+	if !environmentCheck(addr) {
 		return ""
 	}
 	testAddrMap[addr] = struct{}{}

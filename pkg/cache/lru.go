@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -59,7 +59,7 @@ func (c *LRU) Put(key uint64, value interface{}) {
 	}
 }
 
-// Get retrives an item from cache.
+// Get retrieves an item from cache.
 func (c *LRU) Get(key uint64) (interface{}, bool) {
 	if ele, ok := c.cache[key]; ok {
 		c.ll.MoveToFront(ele)

@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2016 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@ import (
 	"bytes"
 	"encoding/binary"
 
-	"github.com/pkg/errors"
+	"github.com/pingcap/errors"
 )
 
 var (
 	tablePrefix  = []byte{'t'}
 	metaPrefix   = []byte{'m'}
-	recordPrefix = []byte{'r'}
+	recordPrefix = []byte("_r")
 )
 
 const (

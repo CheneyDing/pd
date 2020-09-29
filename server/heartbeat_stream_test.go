@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2018 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/pkg/testutil"
-	"github.com/pingcap/pd/v4/pkg/typeutil"
-	"github.com/pingcap/pd/v4/server/core"
+	"github.com/tikv/pd/pkg/testutil"
+	"github.com/tikv/pd/pkg/typeutil"
+	"github.com/tikv/pd/server/core"
 	"go.uber.org/zap"
 )
 
@@ -35,12 +35,13 @@ type testHeartbeatStreamSuite struct {
 	region       *metapb.Region
 }
 
+// TODO: refactor and move to server/schedule/hbstream
 func (s *testHeartbeatStreamSuite) TestActivity(c *C) {
 	var err error
 	var cleanup func()
 	s.svr, cleanup, err = NewTestServer(c)
-	defer cleanup()
 	c.Assert(err, IsNil)
+	defer cleanup()
 	s.svr.cfg.HeartbeatStreamBindInterval = typeutil.NewDuration(time.Second)
 	mustWaitLeader(c, []*Server{s.svr})
 	s.grpcPDClient = testutil.MustNewGrpcClient(c, s.svr.GetAddr())
@@ -48,7 +49,7 @@ func (s *testHeartbeatStreamSuite) TestActivity(c *C) {
 	bootstrapReq := &pdpb.BootstrapRequest{
 		Header: testutil.NewRequestHeader(s.svr.clusterID),
 		Store:  &metapb.Store{Id: 1, Address: "127.0.0.1:0"},
-		Region: &metapb.Region{Id: 2, Peers: []*metapb.Peer{{Id: 3, StoreId: 1, IsLearner: false}}},
+		Region: &metapb.Region{Id: 2, Peers: []*metapb.Peer{{Id: 3, StoreId: 1, Role: metapb.PeerRole_Voter}}},
 	}
 	_, err = s.svr.bootstrapCluster(bootstrapReq)
 	c.Assert(err, IsNil)
@@ -66,7 +67,7 @@ func (s *testHeartbeatStreamSuite) TestActivity(c *C) {
 	err = newHandler(s.svr).AddAddPeerOperator(s.region.GetId(), 2)
 	c.Assert(err, IsNil)
 
-	stream1, stream2 := newRegionheartbeatClient(c, s.grpcPDClient), newRegionheartbeatClient(c, s.grpcPDClient)
+	stream1, stream2 := newRegionHeartbeatClient(c, s.grpcPDClient), newRegionHeartbeatClient(c, s.grpcPDClient)
 	defer stream1.close()
 	defer stream2.close()
 	checkActiveStream := func() int {
@@ -120,7 +121,7 @@ type regionHeartbeatClient struct {
 	respCh chan *pdpb.RegionHeartbeatResponse
 }
 
-func newRegionheartbeatClient(c *C, grpcClient pdpb.PDClient) *regionHeartbeatClient {
+func newRegionHeartbeatClient(c *C, grpcClient pdpb.PDClient) *regionHeartbeatClient {
 	stream, err := grpcClient.RegionHeartbeat(context.Background())
 	c.Assert(err, IsNil)
 	ch := make(chan *pdpb.RegionHeartbeatResponse)

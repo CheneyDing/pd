@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2017 TiKV Project Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,10 +18,11 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule/filter"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
+	"github.com/tikv/pd/pkg/errs"
+	"github.com/tikv/pd/server/config"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
 	"go.uber.org/zap"
 )
 
@@ -41,12 +42,14 @@ const (
 // Location management, mainly used for cross data center deployment.
 type ReplicaChecker struct {
 	cluster opt.Cluster
+	opts    *config.PersistOptions
 }
 
 // NewReplicaChecker creates a replica checker.
 func NewReplicaChecker(cluster opt.Cluster) *ReplicaChecker {
 	return &ReplicaChecker{
 		cluster: cluster,
+		opts:    cluster.GetOpts(),
 	}
 }
 
@@ -65,6 +68,7 @@ func (r *ReplicaChecker) Check(region *core.RegionInfo) *operator.Operator {
 	}
 	if op := r.checkMakeUpReplica(region); op != nil {
 		checkerCounter.WithLabelValues("replica_checker", "new-operator").Inc()
+		op.SetPriorityLevel(core.HighPriority)
 		return op
 	}
 	if op := r.checkRemoveExtraReplica(region); op != nil {
@@ -79,7 +83,7 @@ func (r *ReplicaChecker) Check(region *core.RegionInfo) *operator.Operator {
 }
 
 func (r *ReplicaChecker) checkDownPeer(region *core.RegionInfo) *operator.Operator {
-	if !r.cluster.IsRemoveDownReplicaEnabled() {
+	if !r.opts.IsRemoveDownReplicaEnabled() {
 		return nil
 	}
 
@@ -94,10 +98,10 @@ func (r *ReplicaChecker) checkDownPeer(region *core.RegionInfo) *operator.Operat
 			log.Warn("lost the store, maybe you are recovering the PD cluster", zap.Uint64("store-id", storeID))
 			return nil
 		}
-		if store.DownTime() < r.cluster.GetMaxStoreDownTime() {
+		if store.DownTime() < r.opts.GetMaxStoreDownTime() {
 			continue
 		}
-		if stats.GetDownSeconds() < uint64(r.cluster.GetMaxStoreDownTime().Seconds()) {
+		if stats.GetDownSeconds() < uint64(r.opts.GetMaxStoreDownTime().Seconds()) {
 			continue
 		}
 
@@ -107,7 +111,7 @@ func (r *ReplicaChecker) checkDownPeer(region *core.RegionInfo) *operator.Operat
 }
 
 func (r *ReplicaChecker) checkOfflinePeer(region *core.RegionInfo) *operator.Operator {
-	if !r.cluster.IsReplaceOfflineReplicaEnabled() {
+	if !r.opts.IsReplaceOfflineReplicaEnabled() {
 		return nil
 	}
 
@@ -134,23 +138,15 @@ func (r *ReplicaChecker) checkOfflinePeer(region *core.RegionInfo) *operator.Ope
 }
 
 func (r *ReplicaChecker) checkMakeUpReplica(region *core.RegionInfo) *operator.Operator {
-	if !r.cluster.IsMakeUpReplicaEnabled() {
+	if !r.opts.IsMakeUpReplicaEnabled() {
 		return nil
 	}
-	if len(region.GetPeers()) >= r.cluster.GetMaxReplicas() {
+	if len(region.GetPeers()) >= r.opts.GetMaxReplicas() {
 		return nil
 	}
 	log.Debug("region has fewer than max replicas", zap.Uint64("region-id", region.GetID()), zap.Int("peers", len(region.GetPeers())))
-	var (
-		strategy     = r.strategy(region)
-		regionStores = r.cluster.GetRegionStores(region)
-		extraFilters = make([]filter.Filter, 0)
-	)
-	// IsolationLevel should only be available when PlacementRulesEnabled is false
-	if !r.cluster.IsPlacementRulesEnabled() && len(strategy.locationLabels) > 0 && len(strategy.isolationLevel) > 0 {
-		extraFilters = append(extraFilters, filter.NewIsolationFilter(replicaCheckerName, strategy.isolationLevel, strategy.locationLabels, regionStores))
-	}
-	target := strategy.SelectStoreToAdd(regionStores, extraFilters...)
+	regionStores := r.cluster.GetRegionStores(region)
+	target := r.strategy(region).SelectStoreToAdd(regionStores)
 	if target == 0 {
 		log.Debug("no store to add replica", zap.Uint64("region-id", region.GetID()))
 		checkerCounter.WithLabelValues("replica_checker", "no-target-store").Inc()
@@ -159,19 +155,19 @@ func (r *ReplicaChecker) checkMakeUpReplica(region *core.RegionInfo) *operator.O
 	newPeer := &metapb.Peer{StoreId: target}
 	op, err := operator.CreateAddPeerOperator("make-up-replica", r.cluster, region, newPeer, operator.OpReplica)
 	if err != nil {
-		log.Debug("create make-up-replica operator fail", zap.Error(err))
+		log.Debug("create make-up-replica operator fail", errs.ZapError(err))
 		return nil
 	}
 	return op
 }
 
 func (r *ReplicaChecker) checkRemoveExtraReplica(region *core.RegionInfo) *operator.Operator {
-	if !r.cluster.IsRemoveExtraReplicaEnabled() {
+	if !r.opts.IsRemoveExtraReplicaEnabled() {
 		return nil
 	}
 	// when add learner peer, the number of peer will exceed max replicas for a while,
 	// just comparing the the number of voters to avoid too many cancel add operator log.
-	if len(region.GetVoters()) <= r.cluster.GetMaxReplicas() {
+	if len(region.GetVoters()) <= r.opts.GetMaxReplicas() {
 		return nil
 	}
 	log.Debug("region has more than max replicas", zap.Uint64("region-id", region.GetID()), zap.Int("peers", len(region.GetPeers())))
@@ -190,7 +186,7 @@ func (r *ReplicaChecker) checkRemoveExtraReplica(region *core.RegionInfo) *opera
 }
 
 func (r *ReplicaChecker) checkLocationReplacement(region *core.RegionInfo) *operator.Operator {
-	if !r.cluster.IsLocationReplacementEnabled() {
+	if !r.opts.IsLocationReplacementEnabled() {
 		return nil
 	}
 
@@ -219,7 +215,7 @@ func (r *ReplicaChecker) checkLocationReplacement(region *core.RegionInfo) *oper
 
 func (r *ReplicaChecker) fixPeer(region *core.RegionInfo, storeID uint64, status string) *operator.Operator {
 	// Check the number of replicas first.
-	if len(region.GetPeers()) > r.cluster.GetMaxReplicas() {
+	if len(region.GetPeers()) > r.opts.GetMaxReplicas() {
 		removeExtra := fmt.Sprintf("remove-extra-%s-replica", status)
 		op, err := operator.CreateRemovePeerOperator(removeExtra, r.cluster, operator.OpReplica, region, storeID)
 		if err != nil {
@@ -253,8 +249,8 @@ func (r *ReplicaChecker) strategy(region *core.RegionInfo) *ReplicaStrategy {
 	return &ReplicaStrategy{
 		checkerName:    replicaCheckerName,
 		cluster:        r.cluster,
-		locationLabels: r.cluster.GetLocationLabels(),
-		isolationLevel: r.cluster.GetIsolationLevel(),
+		locationLabels: r.opts.GetLocationLabels(),
+		isolationLevel: r.opts.GetIsolationLevel(),
 		region:         region,
 	}
 }
