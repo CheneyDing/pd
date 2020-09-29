@@ -10,10 +10,12 @@ require (
 	github.com/coreos/go-semver v0.2.0
 	github.com/coreos/pkg v0.0.0-20160727233714-3ac0863d7acf
 	github.com/docker/go-units v0.4.0
+	github.com/eknkc/amber v0.0.0-20171010120322-cdade1c07385 // indirect
 	github.com/go-echarts/go-echarts v1.0.0
 	github.com/go-playground/overalls v0.0.0-20180201144345-22ec1a223b7c
 	github.com/gogo/protobuf v1.3.1
 	github.com/golang/protobuf v1.3.4
+	github.com/golang/snappy v0.0.1 // indirect
 	github.com/google/btree v1.0.0
 	github.com/gorilla/mux v1.7.3
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
@@ -21,7 +23,9 @@ require (
 	github.com/mattn/go-shellwords v1.0.3
 	github.com/mgechev/revive v1.0.2
 	github.com/montanaflynn/stats v0.0.0-20151014174947-eeaced052adb
+	github.com/onsi/gomega v1.4.2 // indirect
 	github.com/opentracing/opentracing-go v1.0.2
+	github.com/petermattis/goid v0.0.0-20180202154549-b0b1615b78e5 // indirect
 	github.com/phf/go-queue v0.0.0-20170504031614-9abe38d0371d
 	github.com/pingcap-incubator/tidb-dashboard v0.0.0-20200921100341-0e148dfc0029
 	github.com/pingcap/check v0.0.0-20191216031241-8a5a85928f12
@@ -30,7 +34,6 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20191029060244-12f4ac2fd11d
 	github.com/pingcap/kvproto v0.0.0-20200927025644-73dc27044686
 	github.com/pingcap/log v0.0.0-20200511115504-543df19646ad
-	github.com/pingcap/pd/v4 v4.0.4
 	github.com/pingcap/sysutil v0.0.0-20200715082929-4c47bcac246a
 	github.com/prometheus/client_golang v1.0.0
 	github.com/prometheus/common v0.4.1
