@@ -3,11 +3,11 @@ package schedulers
 import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/pd/v4/server/core"
-	"github.com/pingcap/pd/v4/server/schedule"
-	"github.com/pingcap/pd/v4/server/schedule/filter"
-	"github.com/pingcap/pd/v4/server/schedule/operator"
-	"github.com/pingcap/pd/v4/server/schedule/opt"
+	"github.com/tikv/pd/server/core"
+	"github.com/tikv/pd/server/schedule"
+	"github.com/tikv/pd/server/schedule/filter"
+	"github.com/tikv/pd/server/schedule/operator"
+	"github.com/tikv/pd/server/schedule/opt"
 	"go.uber.org/zap"
 	"math"
 )
@@ -15,11 +15,6 @@ import (
 func init() {
 	schedule.RegisterSliceDecoderBuilder(PredictRegionType, func(args []string) schedule.ConfigDecoder {
 		return func(v interface{}) error {
-			conf, ok := v.(*predictRegionSchedulerConfig)
-			if !ok {
-				return ErrScheduleConfigNotExist
-			}
-			conf.Name = PredictRegionName
 			return nil
 		}
 	})
@@ -74,8 +69,8 @@ func (p *predictScheduler) GetType() string {
 }
 
 func (p *predictScheduler) IsScheduleAllowed(cluster opt.Cluster) bool {
-	return p.OpController.OperatorCount(operator.OpLeader) < cluster.GetLeaderScheduleLimit() &&
-		p.OpController.OperatorCount(operator.OpRegion) < cluster.GetRegionScheduleLimit()
+	return p.OpController.OperatorCount(operator.OpLeader) < cluster.GetOpts().GetLeaderScheduleLimit() &&
+		p.OpController.OperatorCount(operator.OpRegion) < cluster.GetOpts().GetRegionScheduleLimit()
 }
 
 func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
@@ -89,7 +84,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 	newStores := make(map[uint64]*core.StoreInfo)
 	for _, store := range cluster.GetStores() {
 		if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion &&
-			filter.Target(cluster, store, p.filters) {
+			filter.Target(cluster.GetOpts(), store, p.filters) {
 			newStores[store.GetID()] = store
 		}
 	}
@@ -148,7 +143,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 				destStoreID := pickDestStore(cluster, availNewStores)
 				destStore := cluster.GetStore(destStoreID)
 				if float64(destStore.GetRegionCount()) * 1.05 < 3 * float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
-					dstPeer := &metapb.Peer{StoreId: destStoreID, IsLearner: peer.IsLearner}
+					dstPeer := &metapb.Peer{StoreId: destStoreID, Role: peer.Role}
 					op, err := operator.CreateMovePeerOperator("predict-move-peer", cluster, region, operator.OpRegion, peer.GetStoreId(), dstPeer)
 					if err != nil {
 						log.Debug("fail to create move peer operator", zap.Error(err))

@@ -373,11 +373,7 @@ func summaryStoresLoad(
 			HotPeers: hotPeers,
 		}
 	}
-
-	unhealthyStore := getUnhealthyStores(cluster)
-	storeLen := float64(len(storeByteRate) - len(unhealthyStore))
-
-	//log.Info("storeLen", zap.Any("storeLen:", storeLen))
+	storeLen := float64(len(storeByteRate))
 
 	// store expectation byte/key rate and count for each store-load detail.
 	for id, detail := range loadDetail {
@@ -668,16 +664,16 @@ func (bs *balanceSolver) filterSrcStores() map[uint64]*storeLoadDetail {
 		if store.GetLabelValue(filter.SpecialUseKey) == filter.SpecialUseHotRegion {
 			if float64(store.GetRegionCount()) > 3*bs.sche.conf.GetSrcToleranceRatio()*float64(bs.cluster.GetRegionCount())/float64(len(bs.cluster.GetStores())) {
 				ret[store.GetID()] = bs.stLoadDetail[store.GetID()]
-				balanceHotRegionCounter.WithLabelValues("src-store-succ", strconv.FormatUint(id, 10)).Inc()
+				hotSchedulerResultCounter.WithLabelValues("src-store-succ", strconv.FormatUint(id, 10)).Inc()
 			}
-			balanceHotRegionCounter.WithLabelValues("src-store-failed", strconv.FormatUint(id, 10)).Inc()
+			hotSchedulerResultCounter.WithLabelValues("src-store-failed", strconv.FormatUint(id, 10)).Inc()
 		} else {
 			if detail.LoadPred.min().ByteRate > bs.sche.conf.GetSrcToleranceRatio()*detail.LoadPred.Future.ExpByteRate &&
 				detail.LoadPred.min().KeyRate > bs.sche.conf.GetSrcToleranceRatio()*detail.LoadPred.Future.ExpKeyRate {
 				ret[id] = detail
-				balanceHotRegionCounter.WithLabelValues("src-store-succ", strconv.FormatUint(id, 10)).Inc()
+				hotSchedulerResultCounter.WithLabelValues("src-store-succ", strconv.FormatUint(id, 10)).Inc()
 			}
-			balanceHotRegionCounter.WithLabelValues("src-store-failed", strconv.FormatUint(id, 10)).Inc()
+			hotSchedulerResultCounter.WithLabelValues("src-store-failed", strconv.FormatUint(id, 10)).Inc()
 		}
 	}
 	return ret
@@ -847,16 +843,16 @@ func (bs *balanceSolver) pickDstStores(filters []filter.Filter, candidates []*co
 				store != bs.cluster.GetStore(bs.cur.srcStoreID) {
 				if float64(store.GetRegionCount())*dstToleranceRatio < 3*float64(bs.cluster.GetRegionCount())/float64(len(bs.cluster.GetStores())) {
 					ret[store.GetID()] = bs.stLoadDetail[store.GetID()]
-					balanceHotRegionCounter.WithLabelValues("dst-store-succ", strconv.FormatUint(store.GetID(), 10)).Inc()
+					hotSchedulerResultCounter.WithLabelValues("dst-store-succ", strconv.FormatUint(store.GetID(), 10)).Inc()
 				}
-				balanceHotRegionCounter.WithLabelValues("dst-store-fail", strconv.FormatUint(store.GetID(), 10)).Inc()
+				hotSchedulerResultCounter.WithLabelValues("dst-store-fail", strconv.FormatUint(store.GetID(), 10)).Inc()
 			} else {
 				if detail.LoadPred.max().ByteRate*dstToleranceRatio < detail.LoadPred.Future.ExpByteRate &&
 					detail.LoadPred.max().KeyRate*dstToleranceRatio < detail.LoadPred.Future.ExpKeyRate {
 					ret[store.GetID()] = bs.stLoadDetail[store.GetID()]
-					balanceHotRegionCounter.WithLabelValues("dst-store-succ", strconv.FormatUint(store.GetID(), 10)).Inc()
+					hotSchedulerResultCounter.WithLabelValues("dst-store-succ", strconv.FormatUint(store.GetID(), 10)).Inc()
 				}
-				balanceHotRegionCounter.WithLabelValues("dst-store-fail", strconv.FormatUint(store.GetID(), 10)).Inc()
+				hotSchedulerResultCounter.WithLabelValues("dst-store-fail", strconv.FormatUint(store.GetID(), 10)).Inc()
 			}
 		}
 	}
