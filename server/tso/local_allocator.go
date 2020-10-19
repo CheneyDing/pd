@@ -47,14 +47,22 @@ type LocalTSOAllocator struct {
 }
 
 // NewLocalTSOAllocator creates a new local TSO allocator.
-func NewLocalTSOAllocator(member *member.Member, leadership *election.Leadership, dcLocation string, saveInterval time.Duration, maxResetTSGap func() time.Duration) Allocator {
+func NewLocalTSOAllocator(
+	member *member.Member,
+	leadership *election.Leadership,
+	dcLocation string,
+	saveInterval time.Duration,
+	updatePhysicalInterval time.Duration,
+	maxResetTSGap func() time.Duration,
+) Allocator {
 	return &LocalTSOAllocator{
 		leadership: leadership,
 		timestampOracle: &timestampOracle{
-			client:        leadership.GetClient(),
-			rootPath:      leadership.GetLeaderKey(),
-			saveInterval:  saveInterval,
-			maxResetTSGap: maxResetTSGap,
+			client:                 leadership.GetClient(),
+			rootPath:               leadership.GetLeaderKey(),
+			saveInterval:           saveInterval,
+			updatePhysicalInterval: updatePhysicalInterval,
+			maxResetTSGap:          maxResetTSGap,
 		},
 		member:     member,
 		rootPath:   leadership.GetLeaderKey(),
@@ -139,9 +147,8 @@ func (lta *LocalTSOAllocator) WriteTSO(maxTS *pdpb.Timestamp) error {
 	if err != nil {
 		return err
 	}
-	// If current local TSO has already been greater than
-	// maxTS, then do not update it.
-	if currentTSO.Physical >= maxTS.Physical {
+	// If current local TSO has already been greater or equal to maxTS, then do not update it.
+	if tsoutil.CompareTimestamp(&currentTSO, maxTS) >= 0 {
 		return nil
 	}
 	return lta.SetTSO(tsoutil.GenerateTS(maxTS))

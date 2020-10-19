@@ -272,11 +272,6 @@ func (h *Handler) AddScatterRangeScheduler(args ...string) error {
 	return h.AddScheduler(schedulers.ScatterRangeType, args...)
 }
 
-// AddAdjacentRegionScheduler adds a balance-adjacent-region-scheduler.
-func (h *Handler) AddAdjacentRegionScheduler(args ...string) error {
-	return h.AddScheduler(schedulers.AdjacentRegionType, args...)
-}
-
 // AddGrantLeaderScheduler adds a grant-leader-scheduler.
 func (h *Handler) AddGrantLeaderScheduler(storeID uint64) error {
 	return h.AddScheduler(schedulers.GrantLeaderType, strconv.FormatUint(storeID, 10))
@@ -810,11 +805,6 @@ func (h *Handler) AddScatterRegionsOperators(regionIDs []uint64, startRawKey, en
 	// check region hot status
 	regionMap := make(map[uint64]*core.RegionInfo, len(regions))
 	for _, region := range regions {
-		// If region is Hot, add it into unProcessedRegions
-		if c.IsRegionHot(region) {
-			failureRegionID = append(failureRegionID, fmt.Sprintf("%v", region.GetID()))
-			continue
-		}
 		regionMap[region.GetID()] = region
 	}
 	failures := make(map[uint64]error, len(regionMap))
