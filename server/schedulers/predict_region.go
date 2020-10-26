@@ -33,6 +33,8 @@ const (
 	PredictRegionName = "predict-region-scheduler"
 	// PredictRegionType is balance region scheduler type.
 	PredictRegionType = "predict-region"
+
+	predictRegionTopK = 0.05
 )
 
 type predictRegionSchedulerConfig struct {
@@ -113,7 +115,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 			if len(availNewStores) == 0{
 				destStoreID := pickDestStore(cluster, newStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetLeaderCount()) * 1.05 < predictRegionTopK * float64(cluster.GetRegionCount()) {
 					op, err := operator.CreateTransferLeaderOperator("predict-transfer-leader", cluster, region, region.GetLeader().GetStoreId(), destStoreID, operator.OpLeader)
 					if err != nil {
 						log.Debug("fail to create predict region operator", zap.Error(err))
@@ -124,7 +126,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 			} else {
 				destStoreID := pickDestStore(cluster, availNewStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetLeaderCount()) * 1.05 < float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetLeaderCount()) * 1.05 < predictRegionTopK * float64(cluster.GetRegionCount()) {
 					destPeer := &metapb.Peer{StoreId: destStoreID}
 					op, err := operator.CreateMoveLeaderOperator("predict-move-leader", cluster, region, operator.OpRegion|operator.OpLeader, region.GetLeader().GetStoreId(), destPeer)
 					if err != nil {
@@ -142,7 +144,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 			if peer.GetId() != region.GetLeader().GetId() && !ok && len(availNewStores) != 0{
 				destStoreID := pickDestStore(cluster, availNewStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetRegionCount()) * 1.05 < 3 * float64(cluster.GetRegionCount()) / float64(len(cluster.GetStores())) {
+				if float64(destStore.GetRegionCount()) * 1.05 < predictRegionTopK * 3 * float64(cluster.GetRegionCount())  {
 					dstPeer := &metapb.Peer{StoreId: destStoreID, Role: peer.Role}
 					op, err := operator.CreateMovePeerOperator("predict-move-peer", cluster, region, operator.OpRegion, peer.GetStoreId(), dstPeer)
 					if err != nil {
@@ -217,7 +219,7 @@ func getTopK(regions []*core.RegionInfo) []uint64 {
 		HotDegree[int(indexData)].regionID = append(HotDegree[int(indexData)].regionID, v.GetID())
 	}
 	k := 0
-	topk := len(regions) / 50
+	topk := float64(len(regions)) * predictRegionTopK
 	var retRegionID []uint64
 LOOP:
 	for _, h := range HotDegree {
