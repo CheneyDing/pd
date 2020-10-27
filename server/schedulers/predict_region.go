@@ -34,7 +34,7 @@ const (
 	// PredictRegionType is balance region scheduler type.
 	PredictRegionType = "predict-region"
 
-	predictRegionTopK = 0.05
+	predictRegionTopK = 0.1
 )
 
 type predictRegionSchedulerConfig struct {
