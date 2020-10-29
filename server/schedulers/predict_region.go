@@ -144,7 +144,7 @@ func (p *predictScheduler) Schedule(cluster opt.Cluster) []*operator.Operator {
 			if peer.GetId() != region.GetLeader().GetId() && !ok && len(availNewStores) != 0{
 				destStoreID := pickDestStore(cluster, availNewStores)
 				destStore := cluster.GetStore(destStoreID)
-				if float64(destStore.GetRegionCount()) * 1.05 < predictRegionTopK * float64(cluster.GetRegionCount())  {
+				if float64(destStore.GetRegionCount()) * 1.05 < predictRegionTopK * 3 * float64(cluster.GetRegionCount())  {
 					dstPeer := &metapb.Peer{StoreId: destStoreID, Role: peer.Role}
 					op, err := operator.CreateMovePeerOperator("predict-move-peer", cluster, region, operator.OpRegion, peer.GetStoreId(), dstPeer)
 					if err != nil {
