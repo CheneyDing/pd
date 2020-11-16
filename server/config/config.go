@@ -220,9 +220,10 @@ const (
 	defaultMaxResetTSGap    = 24 * time.Hour
 	defaultKeyType          = "table"
 
-	defaultStrictlyMatchLabel  = false
-	defaultEnableGRPCGateway   = true
-	defaultDisableErrorVerbose = true
+	defaultStrictlyMatchLabel   = false
+	defaultEnablePlacementRules = true
+	defaultEnableGRPCGateway    = true
+	defaultDisableErrorVerbose  = true
 
 	defaultDashboardAddress = "auto"
 
@@ -241,9 +242,9 @@ var (
 	defaultRuntimeServices = []string{}
 	defaultLocationLabels  = []string{}
 	// DefaultStoreLimit is the default store limit of add peer and remove peer.
-	DefaultStoreLimit StoreLimit = StoreLimit{AddPeer: 15, RemovePeer: 15}
+	DefaultStoreLimit = StoreLimit{AddPeer: 15, RemovePeer: 15}
 	// DefaultTiFlashStoreLimit is the default TiFlash store limit of add peer and remove peer.
-	DefaultTiFlashStoreLimit StoreLimit = StoreLimit{AddPeer: 30, RemovePeer: 30}
+	DefaultTiFlashStoreLimit = StoreLimit{AddPeer: 30, RemovePeer: 30}
 )
 
 func init() {
@@ -316,7 +317,7 @@ func adjustFloat64(v *float64, defValue float64) {
 }
 
 func adjustDuration(v *typeutil.Duration, defValue time.Duration) {
-	if v.Duration == 0 {
+	if v.Duration <= 0 {
 		v.Duration = defValue
 	}
 }
@@ -577,9 +578,8 @@ func (c *Config) adjustLog(meta *configMetaData) {
 
 // Clone returns a cloned configuration.
 func (c *Config) Clone() *Config {
-	cfg := &Config{}
-	*cfg = *c
-	return cfg
+	cfg := *c
+	return &cfg
 }
 
 func (c *Config) String() string {
@@ -712,50 +712,19 @@ type ScheduleConfig struct {
 
 // Clone returns a cloned scheduling configuration.
 func (c *ScheduleConfig) Clone() *ScheduleConfig {
-	schedulers := make(SchedulerConfigs, len(c.Schedulers))
-	copy(schedulers, c.Schedulers)
-	storeLimit := make(map[uint64]StoreLimitConfig, len(c.StoreLimit))
-	for k, v := range c.StoreLimit {
-		storeLimit[k] = v
+	schedulers := append(c.Schedulers[:0:0], c.Schedulers...)
+	var storeLimit map[uint64]StoreLimitConfig
+	if c.StoreLimit != nil {
+		storeLimit = make(map[uint64]StoreLimitConfig, len(c.StoreLimit))
+		for k, v := range c.StoreLimit {
+			storeLimit[k] = v
+		}
 	}
-	return &ScheduleConfig{
-		MaxSnapshotCount:             c.MaxSnapshotCount,
-		MaxPendingPeerCount:          c.MaxPendingPeerCount,
-		MaxMergeRegionSize:           c.MaxMergeRegionSize,
-		MaxMergeRegionKeys:           c.MaxMergeRegionKeys,
-		SplitMergeInterval:           c.SplitMergeInterval,
-		PatrolRegionInterval:         c.PatrolRegionInterval,
-		MaxStoreDownTime:             c.MaxStoreDownTime,
-		LeaderScheduleLimit:          c.LeaderScheduleLimit,
-		LeaderSchedulePolicy:         c.LeaderSchedulePolicy,
-		RegionScheduleLimit:          c.RegionScheduleLimit,
-		ReplicaScheduleLimit:         c.ReplicaScheduleLimit,
-		MergeScheduleLimit:           c.MergeScheduleLimit,
-		EnableOneWayMerge:            c.EnableOneWayMerge,
-		EnableCrossTableMerge:        c.EnableCrossTableMerge,
-		HotRegionScheduleLimit:       c.HotRegionScheduleLimit,
-		HotRegionCacheHitsThreshold:  c.HotRegionCacheHitsThreshold,
-		StoreLimit:                   storeLimit,
-		TolerantSizeRatio:            c.TolerantSizeRatio,
-		LowSpaceRatio:                c.LowSpaceRatio,
-		HighSpaceRatio:               c.HighSpaceRatio,
-		SchedulerMaxWaitingOperator:  c.SchedulerMaxWaitingOperator,
-		DisableLearner:               c.DisableLearner,
-		DisableRemoveDownReplica:     c.DisableRemoveDownReplica,
-		DisableReplaceOfflineReplica: c.DisableReplaceOfflineReplica,
-		DisableMakeUpReplica:         c.DisableMakeUpReplica,
-		DisableRemoveExtraReplica:    c.DisableRemoveExtraReplica,
-		DisableLocationReplacement:   c.DisableLocationReplacement,
-		EnableRemoveDownReplica:      c.EnableRemoveDownReplica,
-		EnableReplaceOfflineReplica:  c.EnableReplaceOfflineReplica,
-		EnableMakeUpReplica:          c.EnableMakeUpReplica,
-		EnableRemoveExtraReplica:     c.EnableRemoveExtraReplica,
-		EnableLocationReplacement:    c.EnableLocationReplacement,
-		EnableDebugMetrics:           c.EnableDebugMetrics,
-		EnableJointConsensus:         c.EnableJointConsensus,
-		StoreLimitMode:               c.StoreLimitMode,
-		Schedulers:                   schedulers,
-	}
+	cfg := *c
+	cfg.StoreLimit = storeLimit
+	cfg.Schedulers = schedulers
+	cfg.SchedulersPayload = nil
+	return &cfg
 }
 
 const (
@@ -782,6 +751,7 @@ const (
 	defaultLeaderSchedulePolicy        = "count"
 	defaultStoreLimitMode              = "manual"
 	defaultEnableJointConsensus        = true
+	defaultEnableCrossTableMerge       = true
 )
 
 func (c *ScheduleConfig) adjust(meta *configMetaData) error {
@@ -833,6 +803,9 @@ func (c *ScheduleConfig) adjust(meta *configMetaData) error {
 	if !meta.IsDefined("enable-joint-consensus") {
 		c.EnableJointConsensus = defaultEnableJointConsensus
 	}
+	if !meta.IsDefined("enable-cross-table-merge") {
+		c.EnableCrossTableMerge = defaultEnableCrossTableMerge
+	}
 	adjustFloat64(&c.LowSpaceRatio, defaultLowSpaceRatio)
 	adjustFloat64(&c.HighSpaceRatio, defaultHighSpaceRatio)
 
@@ -849,6 +822,10 @@ func (c *ScheduleConfig) adjust(meta *configMetaData) error {
 	if c.StoreBalanceRate != 0 {
 		DefaultStoreLimit = StoreLimit{AddPeer: c.StoreBalanceRate, RemovePeer: c.StoreBalanceRate}
 		c.StoreBalanceRate = 0
+	}
+
+	if c.StoreLimit == nil {
+		c.StoreLimit = make(map[uint64]StoreLimitConfig)
 	}
 
 	return c.Validate()
@@ -1013,15 +990,10 @@ type ReplicationConfig struct {
 
 // Clone makes a deep copy of the config.
 func (c *ReplicationConfig) Clone() *ReplicationConfig {
-	locationLabels := make(typeutil.StringSlice, len(c.LocationLabels))
-	copy(locationLabels, c.LocationLabels)
-	return &ReplicationConfig{
-		MaxReplicas:          c.MaxReplicas,
-		LocationLabels:       locationLabels,
-		StrictlyMatchLabel:   c.StrictlyMatchLabel,
-		EnablePlacementRules: c.EnablePlacementRules,
-		IsolationLevel:       c.IsolationLevel,
-	}
+	locationLabels := append(c.LocationLabels[:0:0], c.LocationLabels...)
+	cfg := *c
+	cfg.LocationLabels = locationLabels
+	return &cfg
 }
 
 // Validate is used to validate if some replication configurations are right.
@@ -1045,6 +1017,9 @@ func (c *ReplicationConfig) Validate() error {
 
 func (c *ReplicationConfig) adjust(meta *configMetaData) error {
 	adjustUint64(&c.MaxReplicas, defaultMaxReplicas)
+	if !meta.IsDefined("enable-placement-rules") {
+		c.EnablePlacementRules = defaultEnablePlacementRules
+	}
 	if !meta.IsDefined("strictly-match-label") {
 		c.StrictlyMatchLabel = defaultStrictlyMatchLabel
 	}
@@ -1096,16 +1071,10 @@ func (c *PDServerConfig) adjust(meta *configMetaData) error {
 
 // Clone returns a cloned PD server config.
 func (c *PDServerConfig) Clone() *PDServerConfig {
-	runtimeServices := make(typeutil.StringSlice, len(c.RuntimeServices))
-	copy(runtimeServices, c.RuntimeServices)
-	return &PDServerConfig{
-		UseRegionStorage: c.UseRegionStorage,
-		MaxResetTSGap:    c.MaxResetTSGap,
-		KeyType:          c.KeyType,
-		MetricStorage:    c.MetricStorage,
-		DashboardAddress: c.DashboardAddress,
-		RuntimeServices:  runtimeServices,
-	}
+	runtimeServices := append(c.RuntimeServices[:0:0], c.RuntimeServices...)
+	cfg := *c
+	cfg.RuntimeServices = runtimeServices
+	return &cfg
 }
 
 // Validate is used to validate if some pd-server configurations are right.

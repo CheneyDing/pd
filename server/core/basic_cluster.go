@@ -386,6 +386,7 @@ type RegionSetInformer interface {
 	GetRegions() []*RegionInfo
 	GetAdjacentRegions(region *RegionInfo) (*RegionInfo, *RegionInfo)
 	ScanRegions(startKey, endKey []byte, limit int) []*RegionInfo
+	GetRegionByKey(regionKey []byte) *RegionInfo
 }
 
 // StoreSetInformer provides access to a shared informer of stores.

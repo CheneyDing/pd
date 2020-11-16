@@ -1139,7 +1139,7 @@ func RegionsToHexMeta(regions []*metapb.Region) HexRegionsMeta {
 
 		hexRegionMetas[i] = meta
 	}
-	return HexRegionsMeta(hexRegionMetas)
+	return hexRegionMetas
 }
 
 // HexRegionsMeta is a slice of regions' meta in the hex format. Used for formating

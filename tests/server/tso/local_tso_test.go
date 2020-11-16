@@ -15,6 +15,7 @@ package tso_test
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -59,16 +60,29 @@ func (s *testLocalTSOSuite) TestLocalTSO(c *C) {
 
 	err = cluster.RunInitialServers()
 	c.Assert(err, IsNil)
-
+	// To speed up the test, we force to do the check
+	for _, server := range cluster.GetServers() {
+		server.GetTSOAllocatorManager().ClusterDCLocationChecker()
+	}
 	dcClientMap := make(map[string]pdpb.PDClient)
 	for _, dcLocation := range dcLocationConfig {
-		pdName := cluster.WaitAllocatorLeader(dcLocation)
-		c.Assert(len(pdName), Greater, 0)
+		var pdName string
+		testutil.WaitUntil(c, func(c *C) bool {
+			pdName = cluster.WaitAllocatorLeader(dcLocation)
+			return len(pdName) > 0
+		})
 		dcClientMap[dcLocation] = testutil.MustNewGrpcClient(c, cluster.GetServer(pdName).GetAddr())
 	}
 
 	cluster.WaitLeader()
 	leaderServer := cluster.GetServer(cluster.GetLeader())
+	s.testGetDcLocations(c, dcClientMap[leaderServer.GetConfig().LocalTSO.DCLocation],
+		&pdpb.GetDCLocationsRequest{
+			Header: &pdpb.RequestHeader{
+				SenderId: leaderServer.GetServer().GetMember().ID(),
+			},
+		},
+		[]string{"dc-1", "dc-2", "dc-3"})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
@@ -118,4 +132,14 @@ func (s *testLocalTSOSuite) testGetLocalTimestamp(c *C, pdCli pdpb.PDClient, req
 	res := resp.GetTimestamp()
 	c.Assert(res.GetLogical(), Greater, int64(0))
 	return res
+}
+
+func (s *testLocalTSOSuite) testGetDcLocations(c *C, pdCli pdpb.PDClient, req *pdpb.GetDCLocationsRequest, dcLocations []string) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	resp, err := pdCli.GetDCLocations(ctx, req)
+	c.Assert(err, IsNil)
+	sort.Strings(dcLocations)
+	sort.Strings(resp.DcLocations)
+	c.Assert(resp.DcLocations, DeepEquals, dcLocations)
 }
