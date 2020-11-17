@@ -55,9 +55,11 @@ func (c *RaftCluster) HandleAskSplit(request *pdpb.AskSplitRequest) (*pdpb.AskSp
 		return nil, err
 	}
 
-	rwBytesTotalarr := core.GetSplitRegionRwByte()
+	rwBytesTotalarr, rwBytesTotalarrLock := core.GetSplitRegionRwByte()
 	reqRegionInfo := c.GetRegion(reqRegion.GetId())
+	rwBytesTotalarrLock.Lock()
 	rwBytesTotalarr[newRegionID] = reqRegionInfo.GetRwBytesTotal() / 2
+	rwBytesTotalarrLock.Unlock()
 
 	peerIDs := make([]uint64, len(request.Region.Peers))
 	for i := 0; i < len(peerIDs); i++ {
@@ -109,7 +111,7 @@ func (c *RaftCluster) HandleAskBatchSplit(request *pdpb.AskBatchSplitRequest) (*
 	splitIDs := make([]*pdpb.SplitID, 0, splitCount)
 	recordRegions := make([]uint64, 0, splitCount+1)
 
-	rwBytesTotalarr := core.GetSplitRegionRwByte()
+	rwBytesTotalarr, rwBytesTotalarrLock := core.GetSplitRegionRwByte()
 	reqRegionInfo := c.GetRegion(reqRegion.GetId())
 
 	for i := 0; i < int(splitCount); i++ {
@@ -118,7 +120,9 @@ func (c *RaftCluster) HandleAskBatchSplit(request *pdpb.AskBatchSplitRequest) (*
 			return nil, errs.ErrSchedulerNotFound.FastGenByArgs()
 		}
 
+		rwBytesTotalarrLock.Lock()
 		rwBytesTotalarr[newRegionID] = reqRegionInfo.GetRwBytesTotal()
+		rwBytesTotalarrLock.Unlock()
 
 		peerIDs := make([]uint64, len(request.Region.Peers))
 		for i := 0; i < len(peerIDs); i++ {

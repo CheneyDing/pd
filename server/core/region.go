@@ -20,6 +20,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -56,13 +57,15 @@ type RegionInfo struct {
 	rwBytesTotal      uint64
 }
 
+var SplitRegionRwByteLock sync.RWMutex
 var SplitRegionRwByte map[uint64]uint64
 
-func GetSplitRegionRwByte() map[uint64]uint64 {
+func GetSplitRegionRwByte() (map[uint64]uint64, sync.RWMutex) {
 	if SplitRegionRwByte == nil {
 		SplitRegionRwByte = make(map[uint64]uint64)
+		SplitRegionRwByteLock = sync.RWMutex{}
 	}
-	return SplitRegionRwByte
+	return SplitRegionRwByte, SplitRegionRwByteLock
 }
 
 // GetRwBytesTotal returns the total RW bytes of the region.
@@ -608,12 +611,15 @@ func (r *RegionsInfo) GetRegion(regionID uint64) *RegionInfo {
 
 // SetRegion sets the RegionInfo with regionID
 func (r *RegionsInfo) SetRegion(region *RegionInfo) []*RegionInfo {
-	rwBytesTotalarr := GetSplitRegionRwByte()
+	rwBytesTotalarr, rwBytesTotalarrLock := GetSplitRegionRwByte()
 	overlaps := r.tree.getOverlaps(region)
+	rwBytesTotalarrLock.Lock()
 	if rwb, ok := rwBytesTotalarr[region.GetID()]; ok {
 		region.rwBytesTotal = rwb
 		delete(rwBytesTotalarr, region.GetID())
+		rwBytesTotalarrLock.Unlock()
 	} else {
+		rwBytesTotalarrLock.Unlock()
 		var sum uint64
 		sum = 0
 		for _, reg := range overlaps {
