@@ -57,7 +57,7 @@ func newPredictScheduler(opController *schedule.OperatorController, conf *predic
 		conf:           conf,
 	}
 	ret.filters = []filter.Filter{
-		filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true, MoveRegion: true},
+		&filter.StoreStateFilter{ActionScope: PredictRegionType, TransferLeader: true, MoveRegion: true},
 	}
 	return ret
 }

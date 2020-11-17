@@ -640,7 +640,7 @@ func (r *RegionsInfo) SetRegion(region *RegionInfo) []*RegionInfo {
 	}
 
 	if region.approximateSize > 0 {
-		region.rwBytesTotal = region.rwBytesTotal + (region.readBytes+region.writtenBytes)
+		region.rwBytesTotal = region.rwBytesTotal + (region.readBytes + region.writtenBytes)
 	} else {
 		region.rwBytesTotal = 0
 	}
